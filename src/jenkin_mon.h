@@ -74,22 +74,46 @@ typedef struct ledInfo
    bool isAnime;
 }LedInfoT;
 
-typedef struct groupInfo
+typedef struct groupStatus
 {
-   char* groupName;
+   bool isAnime;
+   bool isSuccess;
+   bool isThreshold;
+   bool isAllDisable;
+}GroupStatusT; 
+
+typedef struct serverInfo
+{
    char* serverName;
    char* userName;
    char* passWord;
+}ServerInfoT;
+
+typedef struct curlTimeInfo
+{
+   u_int8   maxTime;            // in second
+   u_int8   pollTime;           // in second
+}CurlTimeInfoT;
+
+typedef struct groupInfo
+{
+   struct groupInfo* p_nextGroup;
+   char* groupName;
+   pthread_t evalColorThread;
+   pthread_t ctrlLedThread;
+   ServerInfoT server;
    u_int8 redLed;
    u_int8 greLed;
    u_int8 bluLed;
    LedInfoT ledStatus;
+   GroupStatusT sta;
    bool isFirstDisplaySuccess;
    u_int16  displaySuccessTimeout;  // in second
    int64    lastSuccessTimeStamp;   // in second
    u_int32  lastBuildThreshold;     // in second 
+   CurlTimeInfoT curlTime;
+
    JobInfoT* p_allJobs;
-   struct groupInfo* p_nextGroup;
 }GroupInfoT;
 
 typedef struct curlInfo
@@ -112,6 +136,7 @@ bool parseXMLFile(const char* fileName, GroupInfoT** pp_headGroup);
 bool parseGroupAttr(xmlDoc *doc, xmlNode *groupNode, GroupInfoT* p_group);
 void printAllGroupInfo(GroupInfoT* p_headGroup);
 void printGroupInfo(GroupInfoT* p_group);
+void initStuffOfAllGroup(GroupInfoT* p_headGroup);
 
 // Parse Job 
 bool parseJobsInfo(xmlDoc *doc, xmlNode *jobsNode, JobInfoT** p_headJob);
@@ -121,6 +146,24 @@ void printJobInfo(JobInfoT* p_job);
 
 // Build Job Files
 bool buildJobFiles(GroupInfoT* p_headGroup);
+
+#if 1
+// Build threads to Evaluate Color for each Group
+bool buildEvalGrpColorTheads(GroupInfoT* p_headGroup);
+void* evalGrpColorPoll(void* arg);
+bool buildCurlCmd(GroupInfoT* p_group, char* curlCommand, u_int32 curlCommandSize);
+bool executeCurlCmd(char* curlCommand);
+void evaluateColor(GroupInfoT* p_group);
+void evalGroupStatus(GroupInfoT* p_group);
+void evalLedStatus(GroupInfoT* p_group);
+
+// Build threads to control led for each group'
+bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup);
+void* ctrGrpLed(void* arg);
+#endif
+
+
+
 
 // Build Curl command
 bool buildCurlCommand(GroupInfoT* p_headGroup, CurlInfoT** pp_headCurl);

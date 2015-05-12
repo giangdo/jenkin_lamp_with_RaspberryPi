@@ -48,6 +48,38 @@
 //         - add "--maxtime" option into each curl command
 //         - maybe we divide theads base on group, each groups will have one thead for execute
 //           curl and evaluate color, one thread to control led group
+//
+//* Version v1.2:
+//   + Design:
+//      - We have 2 threads to manage a group:
+//         . Color Thread: 
+//            , execute curl command to get information of all jobs in group
+//            , evaluate color and modify the evaluated color
+//         . Led Thread:
+//            , get evaluated color and control led
+//         
+//* Version v2.0:
+//    + Design:
+//         - devide threads base on groups
+//
+//* Version v3.0:
+//    + Feature: support command line to control/config program
+//         - start program
+//            $jenkinLight start
+//         - stop program
+//            $jenkinLight stop
+//         - change config file
+//            $jenkinLight add configfile.xml
+//         - show current config file
+//            $jenkinLight show config
+//         - show current led status
+//            $jenkinLight show led
+//         
+//* Version v4.0:
+//    + Feature: use opensaf to support Service Availability feature!
+//
+//* Version v5.0:
+//    + Feature: design USB to GIPI module to control multiple jenkins led status
            
 // Poll interval in each thread
 #define CURL_POLL_INTERVAL 3
@@ -88,6 +120,12 @@ static void sig_chld(int sig)
 	 * needed to make sure SIGCHLD is not set to SIG_IGN,
 	 * in which case we can't wait() on any child.
 	 */
+}
+
+static void exitNow()
+{
+   // TODO: mutex for this terminate? yes -> we need to do this
+   terminate = 1;
 }
 
 //----------------------------------------------------------------------------
@@ -263,17 +301,17 @@ bool parseGroupAttr(xmlDoc *doc, xmlNode *groupNode, GroupInfoT* p_group)
          }
          else if (!strcmp(groupAttrNode->name, "server"))
          {
-            p_group->serverName =
+            p_group->server.serverName =
                xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1);
          }
          else if (!strcmp(groupAttrNode->name, "username"))
          {
-            p_group->userName =
+            p_group->server.userName =
                xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1);
          }
          else if (!strcmp(groupAttrNode->name, "password"))
          {
-            p_group->passWord =
+            p_group->server.passWord =
                xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1);
          }
          else if (!strcmp(groupAttrNode->name, "red_led"))
@@ -367,12 +405,27 @@ void printGroupInfo(GroupInfoT* p_group)
             " display_timeout: %u\n"\
             " last_build_threshold: %u\n",\
             p_group->groupName,
-            p_group->serverName,
-            p_group->userName, p_group->passWord,
+            p_group->server.serverName,
+            p_group->server.userName, p_group->server.passWord,
             p_group->redLed, p_group->greLed, p_group->bluLed,
             p_group->displaySuccessTimeout,
             p_group->lastBuildThreshold);
       printAllJobInfo(p_group->p_allJobs);
+   }
+}
+
+//----------------------------------------------------------------------------
+// Init Stuff of All Groups database
+//----------------------------------------------------------------------------
+void initStuffOfAllGroup(GroupInfoT* p_headGroup)
+{
+   GroupInfoT* p_group = NULL;
+   for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
+   {
+      p_group->isFirstDisplaySuccess = false;
+      p_group->lastSuccessTimeStamp = currentTimeStamp();
+      p_group->curlTime.maxTime = 60;
+      p_group->curlTime.pollTime = 3;
    }
 }
 
@@ -580,9 +633,9 @@ CurlInfoT* getLastCurl(CurlInfoT* p_headCurl)
 
 void buildNewCurl(GroupInfoT* p_group, CurlInfoT* p_curl)
 {
-   p_curl->curlServer = p_group->serverName;
-   p_curl->curlUser   = p_group->userName;
-   p_curl->curlPass   = p_group->passWord;
+   p_curl->curlServer = p_group->server.serverName;
+   p_curl->curlUser   = p_group->server.userName;
+   p_curl->curlPass   = p_group->server.passWord;
 #if USE_ANY_AUTHORIZED_IN_CURL 
    sprintf(p_curl->curlCommand, "curl -silent --anyauth");
 #else
@@ -610,8 +663,8 @@ bool buildCurlCommand(GroupInfoT* p_headGroup, CurlInfoT** pp_headCurl)
          }
          else
          {
-            p_curlTemp = getMatchCurl(p_group->serverName, p_group->userName,
-                                      p_group->passWord, *pp_headCurl);
+            p_curlTemp = getMatchCurl(p_group->server.serverName, p_group->server.userName,
+                                      p_group->server.passWord, *pp_headCurl);
             if (p_curlTemp)
             {
                // Use created curl infor
@@ -639,13 +692,13 @@ bool buildCurlCommand(GroupInfoT* p_headGroup, CurlInfoT** pp_headCurl)
                sprintf(statusCmd,
                        " %s%s%s/api/json?pretty=true\"\\&\""\
                        "tree=name,color -o %s",
-                       p_group->serverName, p_job->jobPath, p_job->jobName,
+                       p_group->server.serverName, p_job->jobPath, p_job->jobName,
                        p_job->statusInfoFile); 
 #else
                sprintf(statusCmd,
                        " %s%s%s/api/json?pretty=true\\&"\
                        "tree=name,color -o %s",
-                       p_group->serverName, p_job->jobPath, p_job->jobName,
+                       p_group->server.serverName, p_job->jobPath, p_job->jobName,
                        p_job->statusInfoFile); 
 #endif
                // XXX TODO: Need to check strlen of statusCmd[] before concatenate this into
@@ -657,7 +710,7 @@ bool buildCurlCommand(GroupInfoT* p_headGroup, CurlInfoT** pp_headCurl)
                sprintf(lastBuildCmd,
                        " %s%s%s/lastBuild/api/json?pretty=true\\&"\
                        "tree=fullDisplayName,id,timestamp,result -o %s",
-                       p_group->serverName, p_job->jobPath, p_job->jobName,
+                       p_group->server.serverName, p_job->jobPath, p_job->jobName,
                        p_job->lastBuildInfoFile); 
                strcat(p_curl->curlCommand, lastBuildCmd);
             }
@@ -1227,6 +1280,211 @@ void* displayLedThreadPoll(void* arg)
 }
 
 //----------------------------------------------------------------------------
+// Build multiple threads to Evaluate Color for each Group
+// Each Group has 1 threads to evaluate group's color
+//----------------------------------------------------------------------------
+bool buildEvalGrpColorTheads(GroupInfoT* p_headGroup)
+{
+   bool AreAllOk = true;
+   GroupInfoT* p_group = NULL;
+   for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
+   {
+      if (pthread_create(&p_group->evalColorThread, NULL, evalGrpColorPoll, p_group)) 
+      {
+         AreAllOk = false;
+         break;
+      }
+   }
+   return AreAllOk;
+}
+
+//----------------------------------------------------------------------------
+// Evaluate Color for Group
+//----------------------------------------------------------------------------
+void* evalGrpColorPoll(void* arg)
+{
+   GroupInfoT* p_group = (GroupInfoT*)arg;
+   u_int32 curlCmdSize = 10000;
+   char* pCurlCmd = malloc(curlCmdSize * sizeof(*pCurlCmd));
+   if (!buildCurlCmd(p_group, pCurlCmd, curlCmdSize))
+   {
+      printf("Can not build curl Command\n");
+      exitNow();
+   }
+   while (!terminate)
+   {
+      if (executeCurlCmd(pCurlCmd))
+      {
+         evaluateColor(p_group);
+         sleep(p_group->curlTime.pollTime);
+      }
+   }
+   free(pCurlCmd);
+   return NULL;
+}
+
+//----------------------------------------------------------------------------
+// Build Curl command string
+//----------------------------------------------------------------------------
+bool buildCurlCmd(GroupInfoT* p_group, char* curlCommand, u_int32 curlCommandSize)
+{
+   u_int32 remainLen = curlCommandSize;
+   u_int32 len;
+
+#if USE_ANY_AUTHORIZED_IN_CURL 
+   len = snprintf(curlCommand, remainLen, "curl --silent --max-time %d --anyauth ",
+                  p_group->curlTime.maxTime);
+#else
+   len = snprintf(curlCommand, remainLen, "curl --silent --max-time %d -u %s:%s ",
+                  p_group->curlTime.maxTime, p_group->server.userName, p_group->server.passWord);
+#endif
+   if (len >= remainLen)
+   {
+      return false;
+   }
+   else
+   {
+      remainLen -= len;
+   }
+
+   JobInfoT* p_job = p_group->p_allJobs;
+   if (p_job)
+   {
+      for (; p_job; p_job = p_job->p_nextJob)
+      {
+         // Build command to get status of Job
+         char* pStatusCmd = malloc(remainLen * sizeof(*pStatusCmd));
+         len = snprintf(pStatusCmd, remainLen, 
+                        " %s%s%s/api/json?pretty=true\\&"\
+                        "tree=name,color -o %s",
+                        p_group->server.serverName, p_job->jobPath, p_job->jobName,
+                        p_job->statusInfoFile); 
+         if (len >= remainLen)
+         {
+            free(pStatusCmd);
+            return false;
+         }
+         else
+         {
+            remainLen -= len;
+            strcat(curlCommand, pStatusCmd);
+            free(pStatusCmd);
+         }
+
+         // Build command to get last build information of Job
+         char* pLastBuildCmd = malloc(remainLen * sizeof(*pLastBuildCmd));
+         len = snprintf(pLastBuildCmd, remainLen,
+                       " %s%s%s/lastBuild/api/json?pretty=true\\&"\
+                       "tree=fullDisplayName,id,timestamp,result -o %s",
+                       p_group->server.serverName, p_job->jobPath, p_job->jobName,
+                       p_job->lastBuildInfoFile); 
+         if (len >= remainLen)
+         {
+            free(pLastBuildCmd);
+            return false;
+         }
+         else
+         {
+            remainLen -= len;
+            strcat(curlCommand, pLastBuildCmd);
+            free(pLastBuildCmd);
+         }
+      }
+
+      // Add done string
+      char* doneStr = malloc(remainLen * sizeof(*doneStr));
+      len = snprintf(doneStr, remainLen,
+                     ";echo done %s", p_group->server.serverName);
+      if (len >= remainLen)
+      {
+         free(doneStr);
+         return false;
+      }
+      else
+      {
+         strcat(curlCommand, doneStr);
+         free(doneStr);
+      }
+   }
+   else
+   {
+      printf("Do not have any job in data base\n");
+      return false;
+   }
+}
+
+//----------------------------------------------------------------------------
+// Execute curl command to get information about a groups from jenkin server
+//----------------------------------------------------------------------------
+bool executeCurlCmd(char* curlCommand)
+{
+   char doneString[100];
+   FILE* file;
+   if ((file = popen(curlCommand, "r")) == NULL)
+   {
+      printf("Can not execute command: %s\n", curlCommand);
+      return false;
+   }
+   while ((fgets(doneString, sizeof(doneString), file) != NULL) && (!terminate));
+   fclose(file);
+   if (isVerbose)
+   {
+      printf("doneString: %s for server: %s\n", doneString);
+   }
+}
+
+//----------------------------------------------------------------------------
+// evaluate Color for group
+//----------------------------------------------------------------------------
+void evaluateColor(GroupInfoT* p_group)
+{
+   // evaluate Group Status base on information store in status files and last
+   // last build status file
+   evalGroupStatus(p_group);
+
+   // evaluate Led status base on Current Group Status information and
+   // last group Status information
+   evalLedStatus(p_group);
+}
+
+//----------------------------------------------------------------------------
+// evaluate Group Status
+//----------------------------------------------------------------------------
+void evalGroupStatus(GroupInfoT* p_group)
+{
+   p_group->sta.isAnime = false; 
+   p_group->sta.isSuccess = true;
+   p_group->sta.isThreshold = false;
+   p_group->sta.isAllDisable = true;
+   JobInfoT* p_job = NULL;
+
+   for (p_job = p_group->p_allJobs; p_job; p_job = p_job->p_nextJob)
+   {
+      LedInfoT jobLedInfo = ledInfoFromfile(p_job->statusInfoFile);
+      p_group->sta.isAllDisable = p_group->sta.isAllDisable &&
+         ((jobLedInfo.color == NO_BUILT) || (jobLedInfo.color == DISABLED));
+      if ((jobLedInfo.color != NO_BUILT) &&
+            (jobLedInfo.color != DISABLED)) 
+      {
+         p_group->sta.isSuccess = p_group->sta.isSuccess && (jobLedInfo.color == BLU_COLOR);
+         p_group->sta.isAnime = p_group->sta.isAnime || jobLedInfo.isAnime; 
+
+         int64 jobTime = timeStampFromFile(p_job->lastBuildInfoFile);
+         int64 curTime = currentTimeStamp();
+         p_group->sta.isThreshold = p_group->sta.isThreshold || 
+            ((curTime - jobTime) > (int64)p_group->lastBuildThreshold); 
+      }
+   }
+}
+
+//----------------------------------------------------------------------------
+// evaluate Group's Led Status
+//----------------------------------------------------------------------------
+void evalLedStatus(GroupInfoT* p_group)
+{
+}
+
+//----------------------------------------------------------------------------
 // This function is use for parsing all argument in command line
 //----------------------------------------------------------------------------
 int main(int argc, char *argv[])
@@ -1297,11 +1555,30 @@ int main(int argc, char *argv[])
       exit(0);
    }
 
+
    printAllGroupInfo(p_allGroups);
    
+   // Init Stuff of All Groups database
+   initStuffOfAllGroup(p_allGroups);
+
    // Init all LED of All groups
    initAllGroupLed(p_allGroups);
 
+#if 1
+   // Build thread to Evaluate Color for each Group
+   // Each Group will have one thread to Evaluate Group's Color
+   if (!buildEvalGrpColorTheads(p_allGroups))
+   {
+      printf("Can not build evalute color theads\n");
+   }
+
+   // Build thead to control Group's Led
+   // Each Group will have one thread to control its Led
+   if (!buildCtrlGrpLedThreads(p_allGroups))
+   {
+      printf("Can not build control led threads\n");
+   }
+#else
    // Build "curl" commands to get status of jobs
    if (!buildCurlCommand(p_allGroups, &p_allCurls))
    {
@@ -1356,5 +1633,6 @@ int main(int argc, char *argv[])
 
    // Clean all Group and job database
    // XXX todo
+#endif
 	return 0;
 }
