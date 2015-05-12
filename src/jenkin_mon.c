@@ -11,6 +11,44 @@
 #include <stdbool.h>
 #include "jenkin_mon.h"
 
+//--------------------------------------------------------------------------------------------------
+// README before read source code
+//--------------------------------------------------------------------------------------------------
+//* Version v1.0:
+//   + Design:
+//      - Curl Threads: Multiple threads that will execute curl command to get information about
+//                      many jobs from jenkins server
+//         . Each jobs information will be stored in 2 files statusInfoFile, lastBuildInfoFile.
+//
+//      - Color Thread: One thread to evaluate color for all group base on information read from
+//                      statusInfoFile and lastBuildInfoFile files.
+//         . Evaluated color will be store in global variable 
+//
+//      - Led Thread: One thread to control led
+//         . Read data from Evaluated color and control GPIO   
+//   + Bugs:
+//      - Race condition between Curl Threads and Color Thread:
+//         -> at the time Curl Thread write contain into file, Color Thread read file
+//      - Race condition between Color Thread and Led Thread:
+//         -> at the time Color Thread write into Evaluatied Color, Led Thread read this infomation
+//            
+//* Version v1.1:
+//   + Design:
+//      - Color Thread: One thread
+//         . execute all Curls command to get information of all jobs
+//         . then read files and evaluate color
+//         . use Mutex to protect evaluated color variable
+//      - Led Thread: One thread to control led
+//         . Read data from Evaluated color and control GPIO   
+//         . Use mutex to protect evaluated color variable
+//    + Disadvantage: 
+//       - if one curls commands stuck when getting information from one server 
+//         ,we can not getting information of another server
+//    + TODO:
+//         - add "--maxtime" option into each curl command
+//         - maybe we divide theads base on group, each groups will have one thead for execute
+//           curl and evaluate color, one thread to control led group
+           
 // Poll interval in each thread
 #define CURL_POLL_INTERVAL 3
 #define EVALUATE_COLOR_POLL_INTERVAL 2
@@ -1207,6 +1245,7 @@ int main(int argc, char *argv[])
    }
 
    // Daemonize
+   // Reference: http://codingfreak.blogspot.com/2012/03/daemon-izing-process-in-linux.html
    if (isDaemon)
    {
       switch (fork())
@@ -1217,16 +1256,16 @@ int main(int argc, char *argv[])
             fprintf(stderr, "fork failed");
             exit(1);
          default:
-            exit(0);
+            exit(0); // Exit parent process
       }
-      if (setsid() == -1)
+      if (setsid() == -1) //Create new sesion containing a single (new) process group
       {
          fprintf(stderr, "setsid failed");
          exit(1);
       }
-      close(0);
-      close(1);
-      close(2);
+      close(0); //Close standard input stdin
+      close(1); //Close standard outout stdout
+      close(2); //Close standard error stderr
    }
 
 	/* Make sure SIGCHLD is not SIG_IGN */
