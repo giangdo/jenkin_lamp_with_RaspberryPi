@@ -76,6 +76,7 @@ typedef struct ledInfo
 
 typedef struct groupStatus
 {
+   // TODO: should use bit field for this datatype.
    bool isAnime;
    bool isSuccess;
    bool isThreshold;
@@ -106,7 +107,8 @@ typedef struct groupInfo
    u_int8 greLed;
    u_int8 bluLed;
    LedInfoT ledStatus;
-   GroupStatusT sta;
+   GroupStatusT curSta;
+   GroupStatusT preSta;
    bool isFirstDisplaySuccess;
    u_int16  displaySuccessTimeout;  // in second
    int64    lastSuccessTimeStamp;   // in second
@@ -115,16 +117,6 @@ typedef struct groupInfo
 
    JobInfoT* p_allJobs;
 }GroupInfoT;
-
-typedef struct curlInfo
-{
-   char* curlServer;
-   char* curlUser;
-   char* curlPass;
-   char curlCommand[20000];
-   struct curlInfo* p_nextCurl;
-	pthread_t curlThread;
-}CurlInfoT;
 
 GroupInfoT* getTailGroup(GroupInfoT* p_headGroup);
 
@@ -147,7 +139,16 @@ void printJobInfo(JobInfoT* p_job);
 // Build Job Files
 bool buildJobFiles(GroupInfoT* p_headGroup);
 
-#if 1
+int64 timeStampFromFile(char* fileName);
+int64 currentTimeStamp(void);
+LedInfoT ledInfoFromfile(char* fileName);
+void colorFromFile(char* fileName, char* colorStr, size_t strSize);
+LedInfoT convert2LedInfo(char* colorStr);
+char* convert2ColorString(LedInfoT led);
+
+void initAllGroupLed(GroupInfoT* p_headGroup);
+void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue);
+
 // Build threads to Evaluate Color for each Group
 bool buildEvalGrpColorTheads(GroupInfoT* p_headGroup);
 void* evalGrpColorPoll(void* arg);
@@ -159,36 +160,4 @@ void evalLedStatus(GroupInfoT* p_group);
 
 // Build threads to control led for each group'
 bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup);
-void* ctrGrpLed(void* arg);
-#endif
-
-
-
-
-// Build Curl command
-bool buildCurlCommand(GroupInfoT* p_headGroup, CurlInfoT** pp_headCurl);
-CurlInfoT* getMatchCurl(char* server, char* user,
-                        char* pass, CurlInfoT* p_headCulr);
-void printAllCurlInfo(CurlInfoT* p_headCurl);
-
-// Build threads for Curl
-bool buildCurlThreads(CurlInfoT* p_headCurl);
-void* curlThreadPoll(void *arg);
-void waitAllCurlsThread(CurlInfoT* p_headCurl);
-void cleanAllCurls(CurlInfoT* p_headCurl);
-
-// Poll evaluate all color of all group
-void* evalColorThreadPoll(void* arg);
-void evalLedStatusForGroup(bool isAnime, bool isSuccess,
-                           bool isThreshold, bool isAllDisable, GroupInfoT* p_group);
-int64 timeStampFromFile(char* fileName);
-int64 currentTimeStamp(void);
-LedInfoT ledInfoFromfile(char* fileName);
-void colorFromFile(char* fileName, char* colorStr, size_t strSize);
-LedInfoT convert2LedInfo(char* colorStr);
-char* convert2ColorString(LedInfoT led);
-
-// Poll to display all color of all group
-void* displayLedThreadPoll(void* arg);
-void initAllGroupLed(GroupInfoT* p_headGroup);
-void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue);
+void* ctrlGrpLedPoll(void* arg);

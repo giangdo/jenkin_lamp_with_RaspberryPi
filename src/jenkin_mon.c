@@ -81,10 +81,8 @@
 //* Version v5.0:
 //    + Feature: design USB to GIPI module to control multiple jenkins led status
            
-// Poll interval in each thread
-#define CURL_POLL_INTERVAL 3
-#define EVALUATE_COLOR_POLL_INTERVAL 2
-#define DISPLAY_LED_POLL_INTERVAL 1
+// Animed Led Interval
+#define ANIME_LED_INTERVAL 1
 
 // Option to use authorized account to get info from jenkin server or not
 #define USE_ANY_AUTHORIZED_IN_CURL 1
@@ -93,13 +91,13 @@
 // Global variable
 //----------------------------------------------------------------
 GroupInfoT* p_allGroups = NULL;
-CurlInfoT* p_allCurls = NULL;
 
 char* pathInfoFiles = "/opt/infoFiles";
 char* xmlFile = "/opt/jobsJenkinConfig.xml";
 
 // Option to control log
 bool isVerbose = false;
+
 // Option to control led
 bool isControlRealLed = true;
 bool isAllowAnime = true;
@@ -424,8 +422,18 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
    {
       p_group->isFirstDisplaySuccess = false;
       p_group->lastSuccessTimeStamp = currentTimeStamp();
+
+      // Init CurlTime value
+      // TODO: should use Ping or sth like that to get network speed between
+      //       current computer and jenkins server, then change this value frequently
+      //       I think interval between ajudgement should be 4-5 hour
       p_group->curlTime.maxTime = 60;
       p_group->curlTime.pollTime = 3;
+
+      p_group->curSta.isAnime = false; 
+      p_group->curSta.isSuccess = false;
+      p_group->curSta.isThreshold = false;
+      p_group->curSta.isAllDisable = true;
    }
 }
 
@@ -607,243 +615,6 @@ bool buildJobFiles(GroupInfoT* p_headGroup)
    return true;
 }
 
-CurlInfoT* getMatchCurl(char* server, char* user, char* pass, CurlInfoT* p_headCurl)
-{
-   CurlInfoT* p_curl = NULL;
-   CurlInfoT* p_matchCurl = NULL;
-   for (p_curl = p_headCurl; p_curl; p_curl = p_curl->p_nextCurl)
-   {
-      if (!strcmp(p_curl->curlServer, server) &&
-          !strcmp(p_curl->curlUser, user) &&
-          !strcmp(p_curl->curlPass, pass))
-      {
-         p_matchCurl = p_curl;
-         break;
-      }
-   }
-   return p_matchCurl;
-}
-
-CurlInfoT* getLastCurl(CurlInfoT* p_headCurl)
-{
-   CurlInfoT* p_curl = NULL;
-   for (p_curl = p_headCurl; p_curl->p_nextCurl; p_curl = p_curl->p_nextCurl);
-   return p_curl;
-}
-
-void buildNewCurl(GroupInfoT* p_group, CurlInfoT* p_curl)
-{
-   p_curl->curlServer = p_group->server.serverName;
-   p_curl->curlUser   = p_group->server.userName;
-   p_curl->curlPass   = p_group->server.passWord;
-#if USE_ANY_AUTHORIZED_IN_CURL 
-   sprintf(p_curl->curlCommand, "curl -silent --anyauth");
-#else
-   sprintf(p_curl->curlCommand, "curl -silent -u %s:%s",
-         p_curl->curlUser, p_curl->curlPass);
-#endif
-}
-
-bool buildCurlCommand(GroupInfoT* p_headGroup, CurlInfoT** pp_headCurl)
-{
-   CurlInfoT* p_curl = *pp_headCurl;
-   CurlInfoT* p_curlTemp = NULL;
-   GroupInfoT* p_group = p_headGroup;
-   if (p_group)
-   {
-      for (; p_group; p_group = p_group->p_nextGroup)
-      {
-         if (!p_curl)
-         {
-            // First time access to head Curl info
-            p_curl = malloc(sizeof(CurlInfoT));
-            buildNewCurl(p_group, p_curl);
-            p_curl->p_nextCurl = NULL;
-            *pp_headCurl = p_curl;
-         }
-         else
-         {
-            p_curlTemp = getMatchCurl(p_group->server.serverName, p_group->server.userName,
-                                      p_group->server.passWord, *pp_headCurl);
-            if (p_curlTemp)
-            {
-               // Use created curl infor
-               p_curl = p_curlTemp;
-            }
-            else
-            {
-               // Create new curl infor in the end of curl database
-               p_curl = getLastCurl(*pp_headCurl);
-               p_curl->p_nextCurl = malloc(sizeof(CurlInfoT));
-               p_curl = p_curl->p_nextCurl;
-               buildNewCurl(p_group, p_curl);
-               p_curl->p_nextCurl = NULL;
-            }
-         }
-
-         JobInfoT* p_job = p_group->p_allJobs;
-         if (p_job)
-         {
-            for (; p_job; p_job = p_job->p_nextJob)
-            {
-               // Build command to get status of Job
-               char statusCmd[400];
-#if 0
-               sprintf(statusCmd,
-                       " %s%s%s/api/json?pretty=true\"\\&\""\
-                       "tree=name,color -o %s",
-                       p_group->server.serverName, p_job->jobPath, p_job->jobName,
-                       p_job->statusInfoFile); 
-#else
-               sprintf(statusCmd,
-                       " %s%s%s/api/json?pretty=true\\&"\
-                       "tree=name,color -o %s",
-                       p_group->server.serverName, p_job->jobPath, p_job->jobName,
-                       p_job->statusInfoFile); 
-#endif
-               // XXX TODO: Need to check strlen of statusCmd[] before concatenate this into
-               // curlCommand[] because sizeof curlCommand[] only char curlCommand[20000]
-               strcat(p_curl->curlCommand, statusCmd);
-
-               // Build command to get last build information of Job
-               char lastBuildCmd[400];
-               sprintf(lastBuildCmd,
-                       " %s%s%s/lastBuild/api/json?pretty=true\\&"\
-                       "tree=fullDisplayName,id,timestamp,result -o %s",
-                       p_group->server.serverName, p_job->jobPath, p_job->jobName,
-                       p_job->lastBuildInfoFile); 
-               strcat(p_curl->curlCommand, lastBuildCmd);
-            }
-         }
-         else
-         {
-            printf("Do not have any job in data base\n");
-            return false;
-         }
-      }
-   } 
-   else
-   {
-      printf("Do not have group in data base\n");
-      return false;
-   }
-   return true;
-}
-
-//----------------------------------------------------------------------------
-// Print all curl database
-//----------------------------------------------------------------------------
-void printAllCurlInfo(CurlInfoT* p_headCurl)
-{
-   CurlInfoT* p_curl = NULL;
-   for (p_curl = p_headCurl; p_curl; p_curl = p_curl->p_nextCurl)
-   {
-      printf("curlCommand:\n%s\n", p_curl->curlCommand);
-
-      // Implement first time curl command
-      int curlResult = system(p_curl->curlCommand);
-      printf("execute curl command result: %d\n", curlResult);
-   }
-}
-
-//----------------------------------------------------------------------------
-// Wait for all curl thread stop
-//----------------------------------------------------------------------------
-void waitAllCurlsThread(CurlInfoT* p_headCurl)
-{
-   CurlInfoT* p_curl = NULL;
-   for (p_curl = p_headCurl; p_curl; p_curl = p_curl->p_nextCurl)
-   {
-      if (pthread_join(p_curl->curlThread, NULL))
-      {
-         printf("Can not join a curl thread\n");
-      }
-      else
-      {
-         if (isVerbose)
-         {
-            printf("Finish join a curl thread\n");
-         }
-      }
-   }
-}
-
-//----------------------------------------------------------------------------
-// Clean all curl database
-//----------------------------------------------------------------------------
-void cleanAllCurls(CurlInfoT* p_headCurl)
-{
-   CurlInfoT* p_curl = NULL;
-   CurlInfoT* p_temp = NULL;
-   for (p_curl = p_headCurl; p_curl; )
-   {
-      p_temp = p_curl->p_nextCurl;
-      free(p_curl);
-      p_curl = p_temp;
-   }
-   if (isVerbose)
-   {
-      printf("Finish clean all curl thread\n");
-      printAllCurlInfo(p_allCurls);
-   }
-}
-
-//----------------------------------------------------------------------------
-// Poll to executing curl command
-//----------------------------------------------------------------------------
-void* curlThreadPoll(void *arg)
-{
-   CurlInfoT* p_curl = (CurlInfoT*)arg;
-   
-   strcat(p_curl->curlCommand,";echo done");
-   while (!terminate)
-   {
-      // XXX : by using system() function, we can not receive SIGTERM or
-      //       SIGINT signal by press "Ctrl + C"
-      //       -> solution: use popen() function
-#if 0
-      int curlResult = system(p_curl->curlCommand);
-      printf("execute curl command result: %d\n", curlResult);
-#else
-      char doneString[10];
-      FILE* file;
-      if ((file = popen(p_curl->curlCommand, "r")) == NULL)
-      {
-         printf("Can not execute command: %s\n",p_curl->curlCommand);
-         return 0;
-      }
-      while ((fgets(doneString, sizeof(doneString), file) != NULL) && (!terminate));
-      fclose(file);
-      if (isVerbose)
-      {
-         printf("doneString: %s for server: %s\n", doneString, p_curl->curlServer);
-      }
-#endif
-      sleep(CURL_POLL_INTERVAL);
-   }
-
-   printf("exit an curl thread poll for server: %s\n", p_curl->curlServer);
-   return 0;
-}
-
-//----------------------------------------------------------------------------
-// Build threads to execute curl commands.
-// One thread will execute one curl command.
-//----------------------------------------------------------------------------
-bool buildCurlThreads(CurlInfoT* p_headCurl)
-{
-   CurlInfoT* p_curl = NULL;
-   for (p_curl = p_headCurl; p_curl; p_curl = p_curl->p_nextCurl)
-   {
-      if(pthread_create(&p_curl->curlThread, NULL, curlThreadPoll, p_curl))
-      {
-         printf("Cannot create an curlThread, error: %s", strerror(errno));
-         return false;
-      }
-   }
-   return true;
-}
-
 //----------------------------------------------------------------------------
 // Get color from status info file
 //----------------------------------------------------------------------------
@@ -1004,117 +775,6 @@ LedInfoT ledInfoFromfile(char* fileName)
 }
 
 //----------------------------------------------------------------------------
-// Evaluate led status for a group 
-//----------------------------------------------------------------------------
-void evalLedStatusForGroup(bool isAnime, bool isSuccess,
-                           bool isThreshold, bool isAllDisable, GroupInfoT* p_group)
-{
-   if (isAllDisable)
-   {
-      p_group->ledStatus.color = NON_COLOR;
-      p_group->ledStatus.isAnime = false;
-      p_group->isFirstDisplaySuccess = true;
-   }
-   else
-   {
-      if (isThreshold)
-      {
-         p_group->ledStatus.color = YEL_COLOR;
-         p_group->ledStatus.isAnime = false;
-         p_group->isFirstDisplaySuccess = true;
-      }
-      else
-      {
-         if (isAnime)
-         {
-            p_group->ledStatus.color = YEL_COLOR;
-            p_group->ledStatus.isAnime = true;
-            p_group->isFirstDisplaySuccess = true;
-         }
-         else
-         {
-            if (isSuccess)
-            {
-               if (p_group->isFirstDisplaySuccess)
-               {
-                  // First time get success status
-                  p_group->lastSuccessTimeStamp = currentTimeStamp();
-                  p_group->ledStatus.color = BLU_COLOR;
-                  p_group->ledStatus.isAnime = false;
-                  p_group->isFirstDisplaySuccess = false;
-               }
-               else
-               {
-                  if (p_group->ledStatus.color == BLU_COLOR)
-                  {
-                     // Another time get success status
-                     int64 curTime = currentTimeStamp();
-                     printf("%lld , %lld\n", curTime - p_group->lastSuccessTimeStamp, (int64)p_group->displaySuccessTimeout);
-                     if ((curTime - p_group->lastSuccessTimeStamp) >
-                           (int64)p_group->displaySuccessTimeout)
-                     {
-                        p_group->ledStatus.color = NON_COLOR;
-                        p_group->ledStatus.isAnime = false;
-                     }
-                  }
-               }
-            }
-            else
-            {
-               p_group->ledStatus.color = RED_COLOR;
-               p_group->ledStatus.isAnime = true;
-               p_group->isFirstDisplaySuccess = true;
-            }
-         }
-      } 
-   }
-}
-
-//----------------------------------------------------------------------------
-// Poll evaluate all color of all group
-//----------------------------------------------------------------------------
-void* evalColorThreadPoll(void* arg)
-{
-   GroupInfoT* p_group = NULL;
-   JobInfoT* p_job = NULL;
-   while (!terminate)
-   {
-      // Poll to all group to evaluate Led status for each group
-      for (p_group = (GroupInfoT*)arg; p_group; p_group = p_group->p_nextGroup)
-      {
-         bool isAnime = false; 
-         bool isSuccess = true;
-         bool isThreshold = false;
-         bool isAllDisable = true;
-         for (p_job = p_group->p_allJobs; p_job; p_job = p_job->p_nextJob)
-         {
-            LedInfoT jobLedInfo = ledInfoFromfile(p_job->statusInfoFile);
-            isAllDisable = isAllDisable &&
-                           ((jobLedInfo.color == NO_BUILT) || (jobLedInfo.color == DISABLED));
-            if ((jobLedInfo.color != NO_BUILT) &&
-                (jobLedInfo.color != DISABLED)) 
-            {
-               isSuccess = isSuccess && (jobLedInfo.color == BLU_COLOR);
-               isAnime = isAnime || jobLedInfo.isAnime; 
-
-               int64 jobTime = timeStampFromFile(p_job->lastBuildInfoFile);
-               int64 curTime = currentTimeStamp();
-               isThreshold = isThreshold || 
-                             ((curTime - jobTime) > (int64)p_group->lastBuildThreshold); 
-            }
-         }
-
-         // Evaluate led status for a group
-         evalLedStatusForGroup(isAnime, isSuccess, isThreshold, isAllDisable, p_group);
-      }
-      sleep(EVALUATE_COLOR_POLL_INTERVAL);
-   }
-
-   printf("exit evaluate color thread\n");
-   return 0;
-}
-
-//----------------------------------------------------------------------------
 // Read current value of GPIO
 //----------------------------------------------------------------------------
 GpioStatusE readGPIOValue(u_int8 pin)
@@ -1188,7 +848,7 @@ void setGPIOValueNoCheck(u_int8 pin, GpioStatusE state)
 }
 
 //----------------------------------------------------------------------------
-// Control led 
+// Control led by read/set value to GPIO
 //----------------------------------------------------------------------------
 void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
 {
@@ -1203,8 +863,10 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
    GpioStatusE g = OF;
    GpioStatusE b = OF;
 
+   // Decide next state for Led
    if (isAllowAnime && led.isAnime)
    {
+      // Specify current state for all Leds
       GpioStatusE currentState;
       if (pColor2Led->r == ON)
       {
@@ -1223,6 +885,7 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
          currentState = readGPIOValue(red);
       }
 
+      // Decide next state for all Leds
       if (pColor2Led->r == ON)
       {
          r = !currentState;
@@ -1245,6 +908,7 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
       b = pColor2Led->b;
    }
 
+   // Set value for GPIO -> control Led
    if (isControlRealLed)
    {
       setGPIOValueNoCheck(red  , r);
@@ -1255,28 +919,6 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
    {
       printf("red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n", red, green, blue, r, g, b);  
    }
-}
-
-//----------------------------------------------------------------------------
-// Poll to display all color of all group
-//----------------------------------------------------------------------------
-void* displayLedThreadPoll(void* arg)
-{
-   GroupInfoT* p_group = NULL;
-   while (!terminate)
-   {
-      for (p_group = (GroupInfoT*)arg; p_group; p_group = p_group->p_nextGroup)
-      {
-         printf("group %s: %s\n", p_group->groupName,
-                convert2ColorString(p_group->ledStatus));
-         ledControl(p_group->ledStatus,
-                    p_group->redLed, p_group->greLed, p_group->bluLed);
-      }
-      sleep(DISPLAY_LED_POLL_INTERVAL);
-   }
-
-   printf("exit display led thread\n");
-   return 0;
 }
 
 //----------------------------------------------------------------------------
@@ -1420,6 +1062,9 @@ bool executeCurlCmd(char* curlCommand)
 {
    char doneString[100];
    FILE* file;
+   // XXX : by using system() function, we can not receive SIGTERM or
+   //       SIGINT signal by press "Ctrl + C"
+   //       -> solution: use popen() function
    if ((file = popen(curlCommand, "r")) == NULL)
    {
       printf("Can not execute command: %s\n", curlCommand);
@@ -1452,36 +1097,127 @@ void evaluateColor(GroupInfoT* p_group)
 //----------------------------------------------------------------------------
 void evalGroupStatus(GroupInfoT* p_group)
 {
-   p_group->sta.isAnime = false; 
-   p_group->sta.isSuccess = true;
-   p_group->sta.isThreshold = false;
-   p_group->sta.isAllDisable = true;
+   p_group->preSta = p_group->curSta;
+   p_group->curSta.isAnime = false; 
+   p_group->curSta.isSuccess = true;
+   p_group->curSta.isThreshold = false;
+   p_group->curSta.isAllDisable = true;
    JobInfoT* p_job = NULL;
 
    for (p_job = p_group->p_allJobs; p_job; p_job = p_job->p_nextJob)
    {
       LedInfoT jobLedInfo = ledInfoFromfile(p_job->statusInfoFile);
-      p_group->sta.isAllDisable = p_group->sta.isAllDisable &&
+      p_group->curSta.isAllDisable = p_group->curSta.isAllDisable &&
          ((jobLedInfo.color == NO_BUILT) || (jobLedInfo.color == DISABLED));
       if ((jobLedInfo.color != NO_BUILT) &&
             (jobLedInfo.color != DISABLED)) 
       {
-         p_group->sta.isSuccess = p_group->sta.isSuccess && (jobLedInfo.color == BLU_COLOR);
-         p_group->sta.isAnime = p_group->sta.isAnime || jobLedInfo.isAnime; 
+         p_group->curSta.isSuccess = p_group->curSta.isSuccess &&
+                                     (jobLedInfo.color == BLU_COLOR);
+
+         p_group->curSta.isAnime = p_group->curSta.isAnime || jobLedInfo.isAnime; 
 
          int64 jobTime = timeStampFromFile(p_job->lastBuildInfoFile);
          int64 curTime = currentTimeStamp();
-         p_group->sta.isThreshold = p_group->sta.isThreshold || 
-            ((curTime - jobTime) > (int64)p_group->lastBuildThreshold); 
+         p_group->curSta.isThreshold = p_group->curSta.isThreshold || 
+                           ((curTime - jobTime) > (int64)p_group->lastBuildThreshold); 
       }
    }
 }
 
 //----------------------------------------------------------------------------
-// evaluate Group's Led Status
+// Evaluate Group's Led Status
 //----------------------------------------------------------------------------
 void evalLedStatus(GroupInfoT* p_group)
 {
+   if (p_group->curSta.isAllDisable)
+   {
+      p_group->ledStatus.color = NON_COLOR;
+      p_group->ledStatus.isAnime = false;
+   }
+   else
+   {
+      if (p_group->curSta.isThreshold)
+      {
+         p_group->ledStatus.color = YEL_COLOR;
+         p_group->ledStatus.isAnime = false;
+      }
+      else
+      {
+         if (p_group->curSta.isAnime)
+         {
+            p_group->ledStatus.color = YEL_COLOR;
+            p_group->ledStatus.isAnime = true;
+         }
+         else
+         {
+            if (p_group->curSta.isSuccess)
+            {
+               if (!p_group->preSta.isAllDisable &&
+                   !p_group->preSta.isThreshold &&
+                   !p_group->preSta.isAnime &&
+                   p_group->preSta.isSuccess)
+               {
+                  //Previous status is full success as current status
+                  //Check timestamp to turn off Led
+                  int64 curTime = currentTimeStamp();
+                  if ((curTime - p_group->lastSuccessTimeStamp) >
+                      (int64)p_group->displaySuccessTimeout)
+                  {
+                     p_group->ledStatus.color = NON_COLOR;
+                     p_group->ledStatus.isAnime = false;
+                  }
+               }
+               else
+               {
+                  //First time full success occur
+                  //Store timestamp
+                  p_group->lastSuccessTimeStamp = currentTimeStamp();
+                  p_group->ledStatus.color = BLU_COLOR;
+                  p_group->ledStatus.isAnime = false;
+               }
+            }
+            else
+            {
+               p_group->ledStatus.color = RED_COLOR;
+               p_group->ledStatus.isAnime = true;
+            }
+         }
+      }
+   }
+}
+
+//----------------------------------------------------------------------------
+// Build threads to control led for each group'
+//----------------------------------------------------------------------------
+bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup)
+{
+   bool areAllOk = true;
+   GroupInfoT* p_group = NULL;
+   for (p_group = p_headGroup; p_group; p_group->p_nextGroup)
+   {
+      if (!pthread_create(&p_group->ctrlLedThread, NULL, ctrlGrpLedPoll, p_group))
+      {
+         areAllOk = false;
+         break;
+      }
+   }
+   return areAllOk;
+}
+
+//----------------------------------------------------------------------------
+// Poll to control all led for group
+//----------------------------------------------------------------------------
+void* ctrlGrpLedPoll(void *arg)
+{
+   GroupInfoT* p_group = (GroupInfoT*)arg;
+   while (!terminate)
+   {
+      ledControl(p_group->ledStatus,
+                 p_group->redLed, p_group->greLed, p_group->bluLed);
+      sleep(ANIME_LED_INTERVAL);
+   }
+   return NULL;
 }
 
 //----------------------------------------------------------------------------
@@ -1555,7 +1291,6 @@ int main(int argc, char *argv[])
       exit(0);
    }
 
-
    printAllGroupInfo(p_allGroups);
    
    // Init Stuff of All Groups database
@@ -1564,7 +1299,6 @@ int main(int argc, char *argv[])
    // Init all LED of All groups
    initAllGroupLed(p_allGroups);
 
-#if 1
    // Build thread to Evaluate Color for each Group
    // Each Group will have one thread to Evaluate Group's Color
    if (!buildEvalGrpColorTheads(p_allGroups))
@@ -1578,61 +1312,40 @@ int main(int argc, char *argv[])
    {
       printf("Can not build control led threads\n");
    }
-#else
-   // Build "curl" commands to get status of jobs
-   if (!buildCurlCommand(p_allGroups, &p_allCurls))
-   {
-      printf("Can not buildCurlCommand\n");
-      exit(0);
-   }
-   else
-   {
-      printAllCurlInfo(p_allCurls);
-   }
 
-   // Build Threads for executing "curl" commands
-   if (!buildCurlThreads(p_allCurls))
-   {
-      printf("Can not buildCurlThreads\n");
-   }
-
-   // Build thread for evaluate Color for each group
-   pthread_t evalColorThread;
-   if (pthread_create(&evalColorThread, NULL, evalColorThreadPoll, p_allGroups))
-   {
-      printf("Can not build Evalute Color Thread\n");
-      exit(0);
-   }
-
-   // Build thread for display LED
-   pthread_t displayLedThread;
-   if (pthread_create(&displayLedThread, NULL, displayLedThreadPoll, p_allGroups))
-   {
-      printf("Can not build Display Led Thread\n");
-   }
-
+   //Main thread will wait until terminated!
    while(!terminate);
-   
-   // Waiting for all curl Threads stop
-   waitAllCurlsThread(p_allCurls);
 
-   // Clean all curl database
-   cleanAllCurls(p_allCurls);
-
-   // Waiting for evalute Color Thread stop
-   if (pthread_join(evalColorThread, NULL))
+   //Waiting for all evaluated Color Threads and Led Control Threads stop
+   GroupInfoT* p_group = NULL;
+   for (p_group = p_allGroups; p_group; p_group->p_nextGroup)
    {
-      printf("Can not join evaluate color thread\n");
+      if (pthread_join(p_group->evalColorThread, NULL) ||
+          pthread_join(p_group->ctrlLedThread, NULL))
+      {
+         printf("Can not join threads\n");
+         exit(1);
+      }
    }
 
-   // Waiting for display Led Thread stop
-   if (pthread_join(displayLedThread, NULL))
+   // Clean all Group and job database /free data...
+   GroupInfoT* p_headGroup = p_allGroups;
+   GroupInfoT* p_tempGroup = NULL;
+   while (p_headGroup != NULL)
    {
-      printf("Can not join display led thread\n");
+      p_tempGroup = p_headGroup;
+      p_headGroup = p_headGroup->p_nextGroup;
+      free(p_tempGroup);
    }
-
-   // Clean all Group and job database
-   // XXX todo
-#endif
+   for (p_group = p_allGroups; p_group; p_group->p_nextGroup)
+   {
+      JobInfoT* p_job = NULL;
+      JobInfoT* p_tempJob = NULL;
+      for (p_job = p_group->p_allJobs; p_job; p_job = p_job->p_nextJob)
+      {
+         p_tempJob = p_job;
+         free(p_job);   
+      }
+   }
 	return 0;
 }
