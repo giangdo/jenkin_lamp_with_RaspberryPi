@@ -315,17 +315,17 @@ bool parseGroupAttr(xmlDoc *doc, xmlNode *groupNode, GroupInfoT* p_group)
          }
          else if (!strcmp(groupAttrNode->name, "red_led"))
          {
-            p_group->redLed =
+            p_group->gpio.redLed =
                atoi(xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1));
          }
          else if (!strcmp(groupAttrNode->name, "green_led"))
          {
-            p_group->greLed =
+            p_group->gpio.greLed =
                atoi(xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1));
          }
          else if (!strcmp(groupAttrNode->name, "blue_led"))
          {
-            p_group->bluLed =
+            p_group->gpio.bluLed =
                atoi(xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1));
          }
          else if (!strcmp(groupAttrNode->name, "display_timeout"))
@@ -371,10 +371,10 @@ void initAllGroupLed(GroupInfoT* p_headGroup)
       p_group->ledStatus.color = WHI_COLOR;
       p_group->ledStatus.isAnime = false;
       ledControl(p_group->ledStatus,
-                 p_group->redLed, p_group->greLed, p_group->bluLed);
+                 p_group->gpio.redLed, p_group->gpio.greLed, p_group->gpio.bluLed);
       p_group->ledStatus.color = NON_COLOR;
       ledControl(p_group->ledStatus,
-                 p_group->redLed, p_group->greLed, p_group->bluLed);
+                 p_group->gpio.redLed, p_group->gpio.greLed, p_group->gpio.bluLed);
    }
 }
 
@@ -406,7 +406,7 @@ void printGroupInfo(GroupInfoT* p_group)
             p_group->groupName,
             p_group->server.serverName,
             p_group->server.userName, p_group->server.passWord,
-            p_group->redLed, p_group->greLed, p_group->bluLed,
+            p_group->gpio.redLed, p_group->gpio.greLed, p_group->gpio.bluLed,
             p_group->displaySuccessTimeout,
             p_group->lastBuildThreshold);
       printAllJobInfo(p_group->p_allJobs);
@@ -421,7 +421,6 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
    GroupInfoT* p_group = NULL;
    for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
    {
-      p_group->isFirstDisplaySuccess = false;
       p_group->lastSuccessTimeStamp = currentTimeStamp();
 
       // Init CurlTime value
@@ -738,7 +737,7 @@ LedInfoT convert2LedInfo(char* colorStr)
 //----------------------------------------------------------------------------
 // Convert led Status to color string
 //----------------------------------------------------------------------------
-char* convert2ColorString(LedInfoT led)
+char* convert2ColorStr(LedInfoT led)
 {
    static char colorStr[20];
    Color2LedInfoT* pColor2Led = C2LInfo;
@@ -757,6 +756,23 @@ char* convert2ColorString(LedInfoT led)
 }
 
 //----------------------------------------------------------------------------
+// Convert RGB gpio status to color string
+//----------------------------------------------------------------------------
+char* convertRgb2ColorStr(GpioStatusE r, GpioStatusE g, GpioStatusE b)
+{
+   Color2LedInfoT* pColor2Led = C2LInfo;
+   pColor2Led += 2; //if (r,g,b) = (OF, OF, OF), i want to show "noColor"
+                    //instead of "notbuilt" or "disabled",
+                    // => ignore these 2 lines in searching
+   while ((pColor2Led->color != NON_COLOR) &&
+          ((r != pColor2Led->r) || (g != pColor2Led->g) || (b != pColor2Led->b)))
+   {
+      pColor2Led++;
+   }
+   return pColor2Led->colorStr;
+}
+
+//----------------------------------------------------------------------------
 // Get led Status Info from file
 //----------------------------------------------------------------------------
 LedInfoT ledInfoFromfile(char* fileName)
@@ -766,7 +782,7 @@ LedInfoT ledInfoFromfile(char* fileName)
    LedInfoT ledInfo = convert2LedInfo(colorStr);
    if (g_isVerbose)
    {
-      printf("Get color from file %s: %s\n", fileName, convert2ColorString(ledInfo));
+      printf("Get color from file %s: %s\n", fileName, convert2ColorStr(ledInfo));
    }
    return ledInfo;
 }
@@ -845,7 +861,7 @@ void setGPIOValueNoCheck(u_int8 pin, GpioStatusE state)
 }
 
 //----------------------------------------------------------------------------
-// Control led by read/set value to GPIO
+// Control led by reading and setting value to GPIO
 //----------------------------------------------------------------------------
 void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
 {
@@ -914,7 +930,45 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
    }
    else
    {
-      printf("red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n", red, green, blue, r, g, b);  
+      printf("%s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
+             convertRgb2ColorStr(r,g,b), red, green, blue, r, g, b);  
+   }
+}
+
+//----------------------------------------------------------------------------
+// Control led only by setting value to GPIO
+//----------------------------------------------------------------------------
+void ledCtrl(ColorE color, GpioStatusE switchState, LedGpioT gpioLed) 
+{
+   Color2LedInfoT* pColor2Led = C2LInfo;
+   while ((pColor2Led->color != NON_COLOR) &&
+         (color != pColor2Led->color))
+   {
+      pColor2Led++;
+   }
+
+   GpioStatusE r = OF;
+   GpioStatusE g = OF;
+   GpioStatusE b = OF;
+
+   if (switchState == ON)
+   {
+      r = pColor2Led->r; 
+      g = pColor2Led->g; 
+      b = pColor2Led->b; 
+   }
+
+   // Set value for GPIO -> control Led
+   if (g_isCtrlRealLed)
+   {
+      setGPIOValueNoCheck(gpioLed.redLed, r);
+      setGPIOValueNoCheck(gpioLed.greLed, g);
+      setGPIOValueNoCheck(gpioLed.bluLed, b);
+   }
+   else
+   {
+      printf("%s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
+             convertRgb2ColorStr(r,g,b), gpioLed.redLed, gpioLed.greLed, gpioLed.bluLed, r, g, b);  
    }
 }
 
@@ -1101,7 +1155,7 @@ void evaluateColor(GroupInfoT* p_group)
                (p_group->curSta.isSuccess)    ?  "Success"   : "False ");
 
       printf("\nGroup %s\ngroup status:%s; led status: %s\n\n",
-             p_group->groupName, str, convert2ColorString(p_group->ledStatus));
+             p_group->groupName, str, convert2ColorStr(p_group->ledStatus));
              
    }
 }
@@ -1146,22 +1200,28 @@ void evalLedStatus(GroupInfoT* p_group)
 {
    if (p_group->curSta.isAllDisable)
    {
+      // TODO lock Mutex here
       p_group->ledStatus.color = NON_COLOR;
       p_group->ledStatus.isAnime = false;
+      // TODO unlock Mutex here
    }
    else
    {
       if (p_group->curSta.isThreshold)
       {
+         // TODO lock Mutex here
          p_group->ledStatus.color = YEL_COLOR;
          p_group->ledStatus.isAnime = false;
+         // TODO unlock Mutex here
       }
       else
       {
          if (p_group->curSta.isBuilding)
          {
+            // TODO lock Mutex here
             p_group->ledStatus.color = YEL_COLOR;
             p_group->ledStatus.isAnime = true;
+            // TODO unlock Mutex here
          }
          else
          {
@@ -1178,8 +1238,10 @@ void evalLedStatus(GroupInfoT* p_group)
                   if ((curTime - p_group->lastSuccessTimeStamp) >
                       (int64)p_group->displaySuccessTimeout)
                   {
+                     // TODO lock Mutex here
                      p_group->ledStatus.color = NON_COLOR;
                      p_group->ledStatus.isAnime = false;
+                     // TODO unlock Mutex here
                   }
                }
                else
@@ -1187,14 +1249,18 @@ void evalLedStatus(GroupInfoT* p_group)
                   //First time full success occur
                   //Store timestamp
                   p_group->lastSuccessTimeStamp = currentTimeStamp();
+                     // TODO lock Mutex here
                   p_group->ledStatus.color = BLU_COLOR;
                   p_group->ledStatus.isAnime = false;
+                     // TODO unlock Mutex here
                }
             }
             else
             {
+                     // TODO lock Mutex here
                p_group->ledStatus.color = RED_COLOR;
                p_group->ledStatus.isAnime = true;
+                     // TODO unlock Mutex here
             }
          }
       }
@@ -1225,10 +1291,46 @@ bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup)
 void* ctrlGrpLedPoll(void *arg)
 {
    GroupInfoT* p_group = (GroupInfoT*)arg;
+   LedInfoT preLedSta; 
+   LedInfoT curLedSta; 
+   GpioStatusE gpioSta;
+
+   preLedSta.color = NON_COLOR;
+   preLedSta.isAnime = false;
+
    while (!terminate)
    {
-      ledControl(p_group->ledStatus,
-                 p_group->redLed, p_group->greLed, p_group->bluLed);
+      if (g_isVerbose)
+      {
+         printf("\nGroup %s: GPIO status\n", p_group->groupName);
+      }
+       
+      // TODO lock Mutex here
+      curLedSta = p_group->ledStatus;
+      // TODO unlock Mutex here
+      
+      // Check if previous Led status and current Led status is the same or not 
+      if ((preLedSta.color == curLedSta.color) &&
+          (preLedSta.isAnime == curLedSta.isAnime))
+      {
+         if (curLedSta.isAnime)
+         {
+            gpioSta = (gpioSta == ON) ? OF : ON;
+            ledCtrl(curLedSta.color, gpioSta, p_group->gpio);
+         }
+         else
+         {
+            printf("%s , led will not blink and led color is the same as before\n",
+                   convert2ColorStr(curLedSta));
+         }
+      }
+      else
+      {
+         gpioSta = ON;
+         ledCtrl(curLedSta.color, gpioSta, p_group->gpio);
+         preLedSta = curLedSta;
+      }
+
       sleep(ANIME_LED_INTERVAL);
    }
    return 0;

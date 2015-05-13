@@ -96,6 +96,13 @@ typedef struct curlTimeInfo
    u_int8   pollTime;           // in second
 }CurlTimeInfoT;
 
+typedef struct ledGPIO
+{
+   u_int8 redLed;
+   u_int8 greLed;
+   u_int8 bluLed;
+}LedGpioT;
+
 typedef struct groupInfo
 {
    struct groupInfo* p_nextGroup;
@@ -103,13 +110,10 @@ typedef struct groupInfo
    pthread_t evalColorThread;
    pthread_t ctrlLedThread;
    ServerInfoT server;
-   u_int8 redLed;
-   u_int8 greLed;
-   u_int8 bluLed;
+   LedGpioT gpio;
    LedInfoT ledStatus;
    GroupStatusT curSta;
    GroupStatusT preSta;
-   bool isFirstDisplaySuccess;
    u_int16  displaySuccessTimeout;  // in second
    int64    lastSuccessTimeStamp;   // in second
    u_int32  lastBuildThreshold;     // in second 
@@ -144,7 +148,8 @@ int64 currentTimeStamp(void);
 LedInfoT ledInfoFromfile(char* fileName);
 void colorFromFile(char* fileName, char* colorStr, size_t strSize);
 LedInfoT convert2LedInfo(char* colorStr);
-char* convert2ColorString(LedInfoT led);
+char* convert2ColorStr(LedInfoT led);
+char* convertRgb2ColorStr(GpioStatusE r, GpioStatusE g, GpioStatusE b);
 
 void initAllGroupLed(GroupInfoT* p_headGroup);
 void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue);
