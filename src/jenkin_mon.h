@@ -18,25 +18,25 @@ typedef long long int64;
 
 typedef struct jobInfo
 {
+   struct jobInfo* p_nextJob;
    char* jobPath;
    char* jobName;
    char statusInfoFile[40];
    char lastBuildInfoFile[40];
-   struct jobInfo* p_nextJob;
 }JobInfoT;
 
 typedef enum color
 {
-   NO_BUILT,
-   DISABLED,
-   RED_COLOR,
-   GRE_COLOR,
-   BLU_COLOR,
-   YEL_COLOR,
-   CYA_COLOR,
-   MAG_COLOR,
-   WHI_COLOR,
-   NON_COLOR
+   NO_BUILT,      // 0
+   DISABLED,      // 1
+   RED_COLOR,     // 2
+   GRE_COLOR,     // 3
+   BLU_COLOR,     // 4
+   YEL_COLOR,     // 5
+   CYA_COLOR,     // 6
+   MAG_COLOR,     // 7
+   WHI_COLOR,     // 8
+   NON_COLOR      // 9
 }ColorE;
 
 typedef enum gpioStatus
@@ -77,10 +77,10 @@ typedef struct ledInfo
 typedef struct groupStatus
 {
    // TODO: should use bit field for this datatype.
-   bool isAnime;
-   bool isSuccess;
-   bool isThreshold;
    bool isAllDisable;
+   bool isThreshold;
+   bool isBuilding;
+   bool isSuccess;
 }GroupStatusT; 
 
 typedef struct serverInfo

@@ -90,18 +90,19 @@
 //----------------------------------------------------------------
 // Global variable
 //----------------------------------------------------------------
-GroupInfoT* p_allGroups = NULL;
+// TODO should check that this folder is exist or not, if not -> mkdir this folder
+char* g_pathInfoFiles = "/opt/infoFiles";
+char* g_xmlFile = "/opt/jobsJenkinConfig.xml";
 
-char* pathInfoFiles = "/opt/infoFiles";
-char* xmlFile = "/opt/jobsJenkinConfig.xml";
-
-// Option to control log
-bool isVerbose = false;
+// Option to control verbose log
+bool g_isVerbose = false;
 
 // Option to control led
-bool isControlRealLed = true;
-bool isAllowAnime = true;
-bool isDaemon = false;
+bool g_isCtrlRealLed = false;
+bool g_isAllowAnime = true;
+
+// Option to deamonize
+bool g_isDaemon = false;
 
 /* Termination flag */
 static int terminate = 0;
@@ -211,7 +212,7 @@ bool parseJobAttr(xmlDoc *doc, xmlNode *jobNode, JobInfoT* p_job)
          }
       }
    }
-   if (isVerbose)
+   if (g_isVerbose)
    {
       printJobInfo(p_job);
    }
@@ -352,7 +353,7 @@ bool parseGroupAttr(xmlDoc *doc, xmlNode *groupNode, GroupInfoT* p_group)
          }
       }
    }
-   if (isVerbose)
+   if (g_isVerbose)
    {
       printGroupInfo(p_group);
    }
@@ -430,7 +431,7 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
       p_group->curlTime.maxTime = 60;
       p_group->curlTime.pollTime = 3;
 
-      p_group->curSta.isAnime = false; 
+      p_group->curSta.isBuilding = false; 
       p_group->curSta.isSuccess = false;
       p_group->curSta.isThreshold = false;
       p_group->curSta.isAllDisable = true;
@@ -442,7 +443,7 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
 //----------------------------------------------------------------------------
 bool parseXMLFile(const char* fileName, GroupInfoT** pp_headGroup)
 {
-   if (isVerbose)
+   if (g_isVerbose)
    {
       printf("parseXMLFile: %s\n",fileName);
    }
@@ -534,32 +535,32 @@ bool parseArgument(int argc, char* argv[])
    {
       if (!strcmp(argv[indexArg], "-f") && (argc > indexArg + 1)) 
       {
-        xmlFile = argv[++indexArg]; 
+        g_xmlFile = argv[++indexArg]; 
       }
       else if (!strcmp(argv[indexArg], "--verbose") ||
                !strcmp(argv[indexArg], "-v"))
       {
-         isVerbose = true;
+         g_isVerbose = true;
       }
       else if (!strcmp(argv[indexArg], "--realled") ||
                !strcmp(argv[indexArg], "-r"))
       {
-         isControlRealLed = true;
+         g_isCtrlRealLed = true;
       }
       else if (!strcmp(argv[indexArg], "--allowanime") ||
                !strcmp(argv[indexArg], "-a"))
       {
-         isAllowAnime = true; 
+         g_isAllowAnime = true; 
       }
       else if (!strcmp(argv[indexArg], "--daemon") ||
                !strcmp(argv[indexArg], "-d"))
       {
-         isDaemon = true;
+         g_isDaemon = true;
       }
       else if (!strcmp(argv[indexArg], "--currentPath") ||
                !strcmp(argv[indexArg], "-c"))
       {
-         pathInfoFiles = "./infoFiles";
+         g_pathInfoFiles = "./infoFiles";
       }
       else if (!strcmp(argv[indexArg], "--help") ||
           !strcmp(argv[indexArg], "-h") ||
@@ -593,9 +594,9 @@ bool buildJobFiles(GroupInfoT* p_headGroup)
             for (; p_job; p_job = p_job->p_nextJob)
             {
                sprintf(p_job->statusInfoFile, "%s/s%u_%u",
-                       pathInfoFiles, groupIndex, jobIndex);
+                       g_pathInfoFiles, groupIndex, jobIndex);
                sprintf(p_job->lastBuildInfoFile, "%s/l%u_%u",
-                       pathInfoFiles, groupIndex, jobIndex);
+                       g_pathInfoFiles, groupIndex, jobIndex);
                jobIndex++;
             }
             groupIndex++;
@@ -620,10 +621,6 @@ bool buildJobFiles(GroupInfoT* p_headGroup)
 //----------------------------------------------------------------------------
 void colorFromFile(char* fileName, char* colorStr, size_t strSize)
 {
-   if (isVerbose)
-   {
-      printf("get color from file: %s\n", fileName);
-   }
    char grepCommand[100];
    char colorLine[30];
    sprintf(grepCommand, "grep \"^  \\\"color\" %s", fileName);
@@ -649,7 +646,7 @@ void colorFromFile(char* fileName, char* colorStr, size_t strSize)
 int64 timeStampFromFile(char* fileName)
 {
    int64 timeStamp = 0;
-   if (isVerbose)
+   if (g_isVerbose)
    {
       printf("get timestamp from file: %s\n", fileName);
    }
@@ -767,9 +764,9 @@ LedInfoT ledInfoFromfile(char* fileName)
    char colorStr[20];
    colorFromFile(fileName, colorStr, sizeof(colorStr));
    LedInfoT ledInfo = convert2LedInfo(colorStr);
-   if (isVerbose)
+   if (g_isVerbose)
    {
-      printf("color: %d, isAnime %d\n", ledInfo.color, ledInfo.isAnime);
+      printf("Get color from file %s: %s\n", fileName, convert2ColorString(ledInfo));
    }
    return ledInfo;
 }
@@ -779,7 +776,7 @@ LedInfoT ledInfoFromfile(char* fileName)
 //----------------------------------------------------------------------------
 GpioStatusE readGPIOValue(u_int8 pin)
 {
-   if (isControlRealLed)
+   if (g_isCtrlRealLed)
    {
       GpioStatusE value;
       char catCommand[200];
@@ -809,7 +806,7 @@ GpioStatusE readGPIOValue(u_int8 pin)
 //----------------------------------------------------------------------------
 void setGPIOValue(u_int8 pin, GpioStatusE state)
 {
-   if (isControlRealLed)
+   if (g_isCtrlRealLed)
    {
       if (state != readGPIOValue(pin))
       {
@@ -832,7 +829,7 @@ void setGPIOValue(u_int8 pin, GpioStatusE state)
 //----------------------------------------------------------------------------
 void setGPIOValueNoCheck(u_int8 pin, GpioStatusE state)
 {
-   if (isControlRealLed)
+   if (g_isCtrlRealLed)
    {
       char echoCommand[200];
       sprintf(echoCommand,
@@ -864,7 +861,7 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
    GpioStatusE b = OF;
 
    // Decide next state for Led
-   if (isAllowAnime && led.isAnime)
+   if (g_isAllowAnime && led.isAnime)
    {
       // Specify current state for all Leds
       GpioStatusE currentState;
@@ -909,7 +906,7 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
    }
 
    // Set value for GPIO -> control Led
-   if (isControlRealLed)
+   if (g_isCtrlRealLed)
    {
       setGPIOValueNoCheck(red  , r);
       setGPIOValueNoCheck(green, g);
@@ -927,17 +924,17 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
 //----------------------------------------------------------------------------
 bool buildEvalGrpColorTheads(GroupInfoT* p_headGroup)
 {
-   bool AreAllOk = true;
+   bool areAllOk = true;
    GroupInfoT* p_group = NULL;
    for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
    {
       if (pthread_create(&p_group->evalColorThread, NULL, evalGrpColorPoll, p_group)) 
       {
-         AreAllOk = false;
+         areAllOk = false;
          break;
       }
    }
-   return AreAllOk;
+   return areAllOk;
 }
 
 //----------------------------------------------------------------------------
@@ -961,8 +958,9 @@ void* evalGrpColorPoll(void* arg)
          sleep(p_group->curlTime.pollTime);
       }
    }
+
    free(pCurlCmd);
-   return NULL;
+   return 0;
 }
 
 //----------------------------------------------------------------------------
@@ -1036,7 +1034,7 @@ bool buildCurlCmd(GroupInfoT* p_group, char* curlCommand, u_int32 curlCommandSiz
       // Add done string
       char* doneStr = malloc(remainLen * sizeof(*doneStr));
       len = snprintf(doneStr, remainLen,
-                     ";echo done %s", p_group->server.serverName);
+                     ";echo Finish curl from jenkin server: %s", p_group->server.serverName);
       if (len >= remainLen)
       {
          free(doneStr);
@@ -1053,6 +1051,8 @@ bool buildCurlCmd(GroupInfoT* p_group, char* curlCommand, u_int32 curlCommandSiz
       printf("Do not have any job in data base\n");
       return false;
    }
+
+   return true;
 }
 
 //----------------------------------------------------------------------------
@@ -1060,7 +1060,7 @@ bool buildCurlCmd(GroupInfoT* p_group, char* curlCommand, u_int32 curlCommandSiz
 //----------------------------------------------------------------------------
 bool executeCurlCmd(char* curlCommand)
 {
-   char doneString[100];
+   char curlDoneStr[100];
    FILE* file;
    // XXX : by using system() function, we can not receive SIGTERM or
    //       SIGINT signal by press "Ctrl + C"
@@ -1070,16 +1070,16 @@ bool executeCurlCmd(char* curlCommand)
       printf("Can not execute command: %s\n", curlCommand);
       return false;
    }
-   while ((fgets(doneString, sizeof(doneString), file) != NULL) && (!terminate));
+   while ((fgets(curlDoneStr, sizeof(curlDoneStr), file) != NULL) && (!terminate));
    fclose(file);
-   if (isVerbose)
+   if (g_isVerbose)
    {
-      printf("doneString: %s for server: %s\n", doneString);
+      printf("%s\n", curlDoneStr);
    }
 }
 
 //----------------------------------------------------------------------------
-// evaluate Color for group
+// Evaluate Color for group
 //----------------------------------------------------------------------------
 void evaluateColor(GroupInfoT* p_group)
 {
@@ -1090,6 +1090,20 @@ void evaluateColor(GroupInfoT* p_group)
    // evaluate Led status base on Current Group Status information and
    // last group Status information
    evalLedStatus(p_group);
+
+   if (g_isVerbose)
+   {
+      char str[100];
+      snprintf(str, 100, "%s - %s - %s- %s",
+               (p_group->curSta.isAllDisable) ?  "Disable"   : " ",
+               (p_group->curSta.isThreshold)  ?  "Threshold" : " ",
+               (p_group->curSta.isBuilding)   ?  "Building"  : "Not building ",
+               (p_group->curSta.isSuccess)    ?  "Success"   : "False ");
+
+      printf("\nGroup %s\ngroup status:%s; led status: %s\n\n",
+             p_group->groupName, str, convert2ColorString(p_group->ledStatus));
+             
+   }
 }
 
 //----------------------------------------------------------------------------
@@ -1098,7 +1112,7 @@ void evaluateColor(GroupInfoT* p_group)
 void evalGroupStatus(GroupInfoT* p_group)
 {
    p_group->preSta = p_group->curSta;
-   p_group->curSta.isAnime = false; 
+   p_group->curSta.isBuilding = false; 
    p_group->curSta.isSuccess = true;
    p_group->curSta.isThreshold = false;
    p_group->curSta.isAllDisable = true;
@@ -1115,7 +1129,7 @@ void evalGroupStatus(GroupInfoT* p_group)
          p_group->curSta.isSuccess = p_group->curSta.isSuccess &&
                                      (jobLedInfo.color == BLU_COLOR);
 
-         p_group->curSta.isAnime = p_group->curSta.isAnime || jobLedInfo.isAnime; 
+         p_group->curSta.isBuilding = p_group->curSta.isBuilding || jobLedInfo.isAnime; 
 
          int64 jobTime = timeStampFromFile(p_job->lastBuildInfoFile);
          int64 curTime = currentTimeStamp();
@@ -1144,7 +1158,7 @@ void evalLedStatus(GroupInfoT* p_group)
       }
       else
       {
-         if (p_group->curSta.isAnime)
+         if (p_group->curSta.isBuilding)
          {
             p_group->ledStatus.color = YEL_COLOR;
             p_group->ledStatus.isAnime = true;
@@ -1155,7 +1169,7 @@ void evalLedStatus(GroupInfoT* p_group)
             {
                if (!p_group->preSta.isAllDisable &&
                    !p_group->preSta.isThreshold &&
-                   !p_group->preSta.isAnime &&
+                   !p_group->preSta.isBuilding &&
                    p_group->preSta.isSuccess)
                {
                   //Previous status is full success as current status
@@ -1194,9 +1208,9 @@ bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup)
 {
    bool areAllOk = true;
    GroupInfoT* p_group = NULL;
-   for (p_group = p_headGroup; p_group; p_group->p_nextGroup)
+   for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
    {
-      if (!pthread_create(&p_group->ctrlLedThread, NULL, ctrlGrpLedPoll, p_group))
+      if (pthread_create(&p_group->ctrlLedThread, NULL, ctrlGrpLedPoll, p_group))
       {
          areAllOk = false;
          break;
@@ -1217,7 +1231,7 @@ void* ctrlGrpLedPoll(void *arg)
                  p_group->redLed, p_group->greLed, p_group->bluLed);
       sleep(ANIME_LED_INTERVAL);
    }
-   return NULL;
+   return 0;
 }
 
 //----------------------------------------------------------------------------
@@ -1240,7 +1254,7 @@ int main(int argc, char *argv[])
 
    // Daemonize
    // Reference: http://codingfreak.blogspot.com/2012/03/daemon-izing-process-in-linux.html
-   if (isDaemon)
+   if (g_isDaemon)
    {
       switch (fork())
       {
@@ -1277,8 +1291,10 @@ int main(int argc, char *argv[])
 		printf("signal() failed: %s", strerror(errno));
 	}
    
+   GroupInfoT* p_allGroups = NULL;
+
    // Parse XML file
-   if (!parseXMLFile(xmlFile, &p_allGroups))
+   if (!parseXMLFile(g_xmlFile, &p_allGroups))
    {
       printf("Can not parse XML file\n");
       exit(0);
@@ -1318,7 +1334,7 @@ int main(int argc, char *argv[])
 
    //Waiting for all evaluated Color Threads and Led Control Threads stop
    GroupInfoT* p_group = NULL;
-   for (p_group = p_allGroups; p_group; p_group->p_nextGroup)
+   for (p_group = p_allGroups; p_group; p_group = p_group->p_nextGroup)
    {
       if (pthread_join(p_group->evalColorThread, NULL) ||
           pthread_join(p_group->ctrlLedThread, NULL))
@@ -1331,21 +1347,23 @@ int main(int argc, char *argv[])
    // Clean all Group and job database /free data...
    GroupInfoT* p_headGroup = p_allGroups;
    GroupInfoT* p_tempGroup = NULL;
-   while (p_headGroup != NULL)
+   while (p_headGroup)
    {
       p_tempGroup = p_headGroup;
       p_headGroup = p_headGroup->p_nextGroup;
+
+      // Clean All Jobs in Group
+      JobInfoT* p_headJob = p_tempGroup->p_allJobs; 
+      JobInfoT* p_tempJob = NULL;
+      while (p_headJob)
+      {
+         p_tempJob = p_headJob;
+         p_headJob = p_headJob->p_nextJob;
+         free(p_tempJob);
+      }
+
       free(p_tempGroup);
    }
-   for (p_group = p_allGroups; p_group; p_group->p_nextGroup)
-   {
-      JobInfoT* p_job = NULL;
-      JobInfoT* p_tempJob = NULL;
-      for (p_job = p_group->p_allJobs; p_job; p_job = p_job->p_nextJob)
-      {
-         p_tempJob = p_job;
-         free(p_job);   
-      }
-   }
+   
 	return 0;
 }
