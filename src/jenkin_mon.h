@@ -107,17 +107,23 @@ typedef struct groupInfo
 {
    struct groupInfo* p_nextGroup;
    char* groupName;
-   pthread_t evalColorThread;
-   pthread_t ctrlLedThread;
    ServerInfoT server;
+
+   pthread_t ctrlLedThread;
    LedGpioT gpio;
    LedInfoT ledStatus;
+   pthread_mutex_t lockLedSta;
+
+   pthread_t evalColorThread;
+   CurlTimeInfoT curlTime;
    GroupStatusT curSta;
    GroupStatusT preSta;
+
    u_int16  displaySuccessTimeout;  // in second
    int64    lastSuccessTimeStamp;   // in second
+   bool needToCheckTimeStamp;
+
    u_int32  lastBuildThreshold;     // in second 
-   CurlTimeInfoT curlTime;
 
    JobInfoT* p_allJobs;
 }GroupInfoT;

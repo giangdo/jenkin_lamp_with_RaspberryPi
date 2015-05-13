@@ -32,23 +32,6 @@
 //      - Race condition between Color Thread and Led Thread:
 //         -> at the time Color Thread write into Evaluatied Color, Led Thread read this infomation
 //            
-//* Version v1.1:
-//   + Design:
-//      - Color Thread: One thread
-//         . execute all Curls command to get information of all jobs
-//         . then read files and evaluate color
-//         . use Mutex to protect evaluated color variable
-//      - Led Thread: One thread to control led
-//         . Read data from Evaluated color and control GPIO   
-//         . Use mutex to protect evaluated color variable
-//    + Disadvantage: 
-//       - if one curls commands stuck when getting information from one server 
-//         ,we can not getting information of another server
-//    + TODO:
-//         - add "--maxtime" option into each curl command
-//         - maybe we divide theads base on group, each groups will have one thead for execute
-//           curl and evaluate color, one thread to control led group
-//
 //* Version v1.2:
 //   + Design:
 //      - We have 2 threads to manage a group:
@@ -81,16 +64,12 @@
 //* Version v5.0:
 //    + Feature: design USB to GIPI module to control multiple jenkins led status
            
-// Animed Led Interval
-#define ANIME_LED_INTERVAL 1
-
 // Option to use authorized account to get info from jenkin server or not
 #define USE_ANY_AUTHORIZED_IN_CURL 1
 
 //----------------------------------------------------------------
 // Global variable
 //----------------------------------------------------------------
-// TODO should check that this folder is exist or not, if not -> mkdir this folder
 char* g_pathInfoFiles = "/opt/infoFiles";
 char* g_xmlFile = "/opt/jobsJenkinConfig.xml";
 
@@ -98,6 +77,7 @@ char* g_xmlFile = "/opt/jobsJenkinConfig.xml";
 bool g_isVerbose = false;
 
 // Option to control led
+const u_int8 g_ledAnimeTime = 1; // in second
 bool g_isCtrlRealLed = false;
 bool g_isAllowAnime = true;
 
@@ -105,11 +85,14 @@ bool g_isAllowAnime = true;
 bool g_isDaemon = false;
 
 /* Termination flag */
-static int terminate = 0;
+static bool g_terminateAll = false;
+static pthread_mutex_t g_terminateLock; 
  
 static void sig_term(int isig)
 {
-	terminate = 1;
+   pthread_mutex_lock(&g_terminateLock);
+   g_terminateAll = true;
+   pthread_mutex_unlock(&g_terminateLock);
 }
 
 static void sig_chld(int sig)
@@ -123,8 +106,10 @@ static void sig_chld(int sig)
 
 static void exitNow()
 {
-   // TODO: mutex for this terminate? yes -> we need to do this
-   terminate = 1;
+   pthread_mutex_lock(&g_terminateLock);
+   g_terminateAll = true;
+   pthread_mutex_unlock(&g_terminateLock);
+
 }
 
 //----------------------------------------------------------------------------
@@ -365,6 +350,7 @@ bool parseGroupAttr(xmlDoc *doc, xmlNode *groupNode, GroupInfoT* p_group)
 //----------------------------------------------------------------------------
 void initAllGroupLed(GroupInfoT* p_headGroup)
 {
+   // TODO: need to init gpio in this function instead of using bashscript
    GroupInfoT* p_group = NULL;
    for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
    {
@@ -421,8 +407,11 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
    GroupInfoT* p_group = NULL;
    for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
    {
-      p_group->lastSuccessTimeStamp = currentTimeStamp();
-
+      if (pthread_mutex_init(&p_group->lockLedSta, NULL) != 0)
+      {
+         printf("Init mutex fail\n");
+         exit(1);
+      }
       // Init CurlTime value
       // TODO: should use Ping or sth like that to get network speed between
       //       current computer and jenkins server, then change this value frequently
@@ -562,8 +551,8 @@ bool parseArgument(int argc, char* argv[])
          g_pathInfoFiles = "./infoFiles";
       }
       else if (!strcmp(argv[indexArg], "--help") ||
-          !strcmp(argv[indexArg], "-h") ||
-          !strcmp(argv[indexArg], "help"))
+               !strcmp(argv[indexArg], "-h") ||
+               !strcmp(argv[indexArg], "help"))
       {
          printf("usage:\n"
                 "default xml config file is /opt/jobsJenkinConfig.xml, if we want to change use -f\n"
@@ -580,6 +569,7 @@ bool parseArgument(int argc, char* argv[])
 
 bool buildJobFiles(GroupInfoT* p_headGroup)
 {
+   // TODO: need to check g_pathInfoFiles exist or not
    GroupInfoT* p_group = p_headGroup;
    if (p_group)
    {
@@ -938,7 +928,7 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
 //----------------------------------------------------------------------------
 // Control led only by setting value to GPIO
 //----------------------------------------------------------------------------
-void ledCtrl(ColorE color, GpioStatusE switchState, LedGpioT gpioLed) 
+void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed) 
 {
    Color2LedInfoT* pColor2Led = C2LInfo;
    while ((pColor2Led->color != NON_COLOR) &&
@@ -951,7 +941,7 @@ void ledCtrl(ColorE color, GpioStatusE switchState, LedGpioT gpioLed)
    GpioStatusE g = OF;
    GpioStatusE b = OF;
 
-   if (switchState == ON)
+   if (gpioState == ON)
    {
       r = pColor2Led->r; 
       g = pColor2Led->g; 
@@ -968,7 +958,9 @@ void ledCtrl(ColorE color, GpioStatusE switchState, LedGpioT gpioLed)
    else
    {
       printf("%s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
-             convertRgb2ColorStr(r,g,b), gpioLed.redLed, gpioLed.greLed, gpioLed.bluLed, r, g, b);  
+             convertRgb2ColorStr(r,g,b),
+             gpioLed.redLed, gpioLed.greLed, gpioLed.bluLed,
+             r, g, b);  
    }
 }
 
@@ -1004,8 +996,17 @@ void* evalGrpColorPoll(void* arg)
       printf("Can not build curl Command\n");
       exitNow();
    }
-   while (!terminate)
+
+   while (1)
    {
+      pthread_mutex_lock(&g_terminateLock);
+      bool tempTerminate = g_terminateAll;
+      pthread_mutex_unlock(&g_terminateLock);
+      if (tempTerminate)
+      {
+         break;
+      }
+
       if (executeCurlCmd(pCurlCmd))
       {
          evaluateColor(p_group);
@@ -1124,7 +1125,18 @@ bool executeCurlCmd(char* curlCommand)
       printf("Can not execute command: %s\n", curlCommand);
       return false;
    }
-   while ((fgets(curlDoneStr, sizeof(curlDoneStr), file) != NULL) && (!terminate));
+
+   while (fgets(curlDoneStr, sizeof(curlDoneStr), file) != NULL)
+   { 
+      pthread_mutex_lock(&g_terminateLock);
+      bool tempTerminate = g_terminateAll;
+      pthread_mutex_unlock(&g_terminateLock);
+      if (tempTerminate)
+      {
+         break;
+      }
+   }
+
    fclose(file);
    if (g_isVerbose)
    {
@@ -1198,30 +1210,25 @@ void evalGroupStatus(GroupInfoT* p_group)
 //----------------------------------------------------------------------------
 void evalLedStatus(GroupInfoT* p_group)
 {
+   pthread_mutex_lock(&p_group->lockLedSta);
    if (p_group->curSta.isAllDisable)
    {
-      // TODO lock Mutex here
       p_group->ledStatus.color = NON_COLOR;
       p_group->ledStatus.isAnime = false;
-      // TODO unlock Mutex here
    }
    else
    {
       if (p_group->curSta.isThreshold)
       {
-         // TODO lock Mutex here
          p_group->ledStatus.color = YEL_COLOR;
          p_group->ledStatus.isAnime = false;
-         // TODO unlock Mutex here
       }
       else
       {
          if (p_group->curSta.isBuilding)
          {
-            // TODO lock Mutex here
             p_group->ledStatus.color = YEL_COLOR;
             p_group->ledStatus.isAnime = true;
-            // TODO unlock Mutex here
          }
          else
          {
@@ -1233,38 +1240,40 @@ void evalLedStatus(GroupInfoT* p_group)
                    p_group->preSta.isSuccess)
                {
                   //Previous status is full success as current status
-                  //Check timestamp to turn off Led
-                  int64 curTime = currentTimeStamp();
-                  if ((curTime - p_group->lastSuccessTimeStamp) >
-                      (int64)p_group->displaySuccessTimeout)
+                  if (p_group->needToCheckTimeStamp)
                   {
-                     // TODO lock Mutex here
-                     p_group->ledStatus.color = NON_COLOR;
-                     p_group->ledStatus.isAnime = false;
-                     // TODO unlock Mutex here
+                     //Check timestamp to turn off Led
+                     int64 curTime = currentTimeStamp();
+                     if ((curTime - p_group->lastSuccessTimeStamp) >
+                         (int64)p_group->displaySuccessTimeout)
+                     {
+                        p_group->ledStatus.color = NON_COLOR;
+                        p_group->ledStatus.isAnime = false;
+
+                        // Turn off LED -> don't need to check timestamp anymore
+                        p_group->needToCheckTimeStamp = false;
+                     }
                   }
                }
                else
                {
-                  //First time full success occur
-                  //Store timestamp
+                  //First time full success occur -> Store timestamp
                   p_group->lastSuccessTimeStamp = currentTimeStamp();
-                     // TODO lock Mutex here
+                  p_group->needToCheckTimeStamp = true;
+
                   p_group->ledStatus.color = BLU_COLOR;
                   p_group->ledStatus.isAnime = false;
-                     // TODO unlock Mutex here
                }
             }
             else
             {
-                     // TODO lock Mutex here
                p_group->ledStatus.color = RED_COLOR;
                p_group->ledStatus.isAnime = true;
-                     // TODO unlock Mutex here
             }
          }
       }
    }
+   pthread_mutex_unlock(&p_group->lockLedSta);
 }
 
 //----------------------------------------------------------------------------
@@ -1298,22 +1307,30 @@ void* ctrlGrpLedPoll(void *arg)
    preLedSta.color = NON_COLOR;
    preLedSta.isAnime = false;
 
-   while (!terminate)
+   while (1)
    {
+      pthread_mutex_lock(&g_terminateLock);
+      bool tempTerminate = g_terminateAll;
+      pthread_mutex_unlock(&g_terminateLock);
+      if (tempTerminate)
+      {
+         break;
+      }
+
       if (g_isVerbose)
       {
          printf("\nGroup %s: GPIO status\n", p_group->groupName);
       }
-       
-      // TODO lock Mutex here
+
+      pthread_mutex_lock(&p_group->lockLedSta);
       curLedSta = p_group->ledStatus;
-      // TODO unlock Mutex here
-      
+      pthread_mutex_unlock(&p_group->lockLedSta);
+
       // Check if previous Led status and current Led status is the same or not 
       if ((preLedSta.color == curLedSta.color) &&
           (preLedSta.isAnime == curLedSta.isAnime))
       {
-         if (curLedSta.isAnime)
+         if (g_isAllowAnime && curLedSta.isAnime)
          {
             gpioSta = (gpioSta == ON) ? OF : ON;
             ledCtrl(curLedSta.color, gpioSta, p_group->gpio);
@@ -1331,7 +1348,7 @@ void* ctrlGrpLedPoll(void *arg)
          preLedSta = curLedSta;
       }
 
-      sleep(ANIME_LED_INTERVAL);
+      sleep(g_ledAnimeTime);
    }
    return 0;
 }
@@ -1341,12 +1358,6 @@ void* ctrlGrpLedPoll(void *arg)
 //----------------------------------------------------------------------------
 int main(int argc, char *argv[])
 {
-	int job_count = 0, i;
-	struct thread_info *job_thread_tmp;
-	struct job_data *job_data_tmp;
-	char date[8];
-	memset(date, 0, sizeof(date));
-
    // Parse Argument from command line
    if (!parseArgument(argc, argv))
    {
@@ -1376,6 +1387,11 @@ int main(int argc, char *argv[])
       close(0); //Close standard input stdin
       close(1); //Close standard outout stdout
       close(2); //Close standard error stderr
+   }
+
+   if (!pthread_mutex_init(&g_terminateLock, NULL))
+   {
+      printf("Can not init mutex for terminate flag\n");
    }
 
 	/* Make sure SIGCHLD is not SIG_IGN */
@@ -1431,8 +1447,17 @@ int main(int argc, char *argv[])
       printf("Can not build control led threads\n");
    }
 
-   //Main thread will wait until terminated!
-   while(!terminate);
+   //Main thread will wait until g_terminateAll is true
+   while (1)
+   {
+      pthread_mutex_lock(&g_terminateLock);
+      bool tempTerminate = g_terminateAll;
+      pthread_mutex_unlock(&g_terminateLock);
+      if (tempTerminate)
+      {
+         break;
+      }
+   }
 
    //Waiting for all evaluated Color Threads and Led Control Threads stop
    GroupInfoT* p_group = NULL;
@@ -1464,8 +1489,11 @@ int main(int argc, char *argv[])
          free(p_tempJob);
       }
 
+      pthread_mutex_destroy(&p_tempGroup->lockLedSta);
       free(p_tempGroup);
    }
+
+   pthread_mutex_destroy(&g_terminateLock);
    
 	return 0;
 }
