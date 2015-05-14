@@ -81,7 +81,7 @@ typedef struct groupStatus
    bool isThreshold;
    bool isBuilding;
    bool isSuccess;
-}GroupStatusT; 
+}GroupStatusT;
 
 typedef struct serverInfo
 {
@@ -103,6 +103,16 @@ typedef struct ledGPIO
    u_int8 bluLed;
 }LedGpioT;
 
+typedef struct stdLedSta
+{
+   LedInfoT disable;
+   LedInfoT building;
+   LedInfoT threshold;
+   LedInfoT success;
+   LedInfoT successNotShow;
+   LedInfoT fail;
+}StdLedStaT; //Standard led status base on group status
+
 typedef struct groupInfo
 {
    struct groupInfo* p_nextGroup;
@@ -112,6 +122,7 @@ typedef struct groupInfo
    pthread_t ctrlLedThread;
    LedGpioT gpio;
    LedInfoT ledStatus;
+   StdLedStaT stdLed;
    pthread_mutex_t lockLedSta;
 
    pthread_t evalColorThread;
@@ -123,7 +134,7 @@ typedef struct groupInfo
    int64    lastSuccessTimeStamp;   // in second
    bool needToCheckTimeStamp;
 
-   u_int32  lastBuildThreshold;     // in second 
+   u_int32  lastBuildThreshold;     // in second
 
    JobInfoT* p_allJobs;
 }GroupInfoT;
@@ -140,7 +151,7 @@ void printAllGroupInfo(GroupInfoT* p_headGroup);
 void printGroupInfo(GroupInfoT* p_group);
 void initStuffOfAllGroup(GroupInfoT* p_headGroup);
 
-// Parse Job 
+// Parse Job
 bool parseJobsInfo(xmlDoc *doc, xmlNode *jobsNode, JobInfoT** p_headJob);
 bool parseJobAttr(xmlDoc *doc, xmlNode *jobNode, JobInfoT* p_job);
 void printAllJobInfo(JobInfoT* p_jobHead);
@@ -154,7 +165,7 @@ int64 currentTimeStamp(void);
 LedInfoT ledInfoFromfile(char* fileName);
 void colorFromFile(char* fileName, char* colorStr, size_t strSize);
 LedInfoT convert2LedInfo(char* colorStr);
-char* convert2ColorStr(LedInfoT led);
+void convert2ColorStr(LedInfoT led, char* colorStr, u_int32 strLength);
 char* convertRgb2ColorStr(GpioStatusE r, GpioStatusE g, GpioStatusE b);
 
 void initAllGroupLed(GroupInfoT* p_headGroup);
@@ -169,6 +180,7 @@ bool executeCurlCmd(char* curlCommand);
 void evaluateColor(GroupInfoT* p_group);
 void evalGroupStatus(GroupInfoT* p_group);
 void evalLedStatus(GroupInfoT* p_group);
+void assignGrpLedStatus(GroupInfoT* p_group, LedInfoT ledInfo);
 
 // Build threads to control led for each group'
 bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup);

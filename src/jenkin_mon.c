@@ -11,7 +11,6 @@
 #include <stdbool.h>
 #include "jenkin_mon.h"
 #include <dirent.h>
-#include <curl/curl.h>
 
 //--------------------------------------------------------------------------------------------------
 // README before read source code
@@ -24,25 +23,25 @@
 //
 //      - Color Thread: One thread to evaluate color for all group base on information read from
 //                      statusInfoFile and lastBuildInfoFile files.
-//         . Evaluated color will be store in global variable 
+//         . Evaluated color will be store in global variable
 //
 //      - Led Thread: One thread to control led
-//         . Read data from Evaluated color and control GPIO   
+//         . Read data from Evaluated color and control GPIO
 //   + Bugs:
 //      - Race condition between Curl Threads and Color Thread:
 //         -> at the time Curl Thread write contain into file, Color Thread read file
 //      - Race condition between Color Thread and Led Thread:
 //         -> at the time Color Thread write into Evaluatied Color, Led Thread read this infomation
-//            
+//
 //* Version v1.2:
 //   + Design:
 //      - We have 2 threads to manage a group:
-//         . Color Thread: 
+//         . Color Thread:
 //            , execute curl command to get information of all jobs in group
 //            , evaluate color and modify the evaluated color
 //         . Led Thread:
 //            , get evaluated color and control led
-//         
+//
 //* Version v2.0:
 //    + Design:
 //         - devide threads base on groups
@@ -59,13 +58,13 @@
 //            $jenkinLight show config
 //         - show current led status
 //            $jenkinLight show led
-//         
+//
 //* Version v4.0:
 //    + Feature: use opensaf to support Service Availability feature!
 //
 //* Version v5.0:
 //    + Feature: design USB to GIPI module to control multiple jenkins led status
-           
+
 // Option to use authorized account to get info from jenkin server or not
 #define USE_ANY_AUTHORIZED_IN_CURL 1
 
@@ -81,15 +80,14 @@ bool g_isVerbose = false;
 // Option to control led
 const u_int8 g_ledAnimeTime = 1; // in second
 bool g_isCtrlRealLed = false;
-bool g_isAllowAnime = true;
 
 // Option to deamonize
 bool g_isDaemon = false;
 
 /* Termination flag */
 static bool g_terminateAll = false;
-static pthread_mutex_t g_terminateLock; 
- 
+static pthread_mutex_t g_terminateLock;
+
 //----------------------------------------------------------------------------
 // Handle for SIGINT and SIGTERM
 //----------------------------------------------------------------------------
@@ -136,21 +134,16 @@ GroupInfoT* getTailGroup(GroupInfoT* p_headGroup)
    {
       return NULL;
    }
-#if 0
-   GroupInfoT* p_curGroup = p_headGroup;
-   while (p_curGroup->p_nextGroup)
-   {
-      p_curGroup = p_curGroup->p_nextGroup;
-   }
-#else
    GroupInfoT* p_curGroup = NULL;
    for (p_curGroup = p_headGroup;
         p_curGroup->p_nextGroup;
         p_curGroup = p_curGroup->p_nextGroup);
-#endif
    return p_curGroup;
 }
 
+//----------------------------------------------------------------------------
+// Print All Jobs's information
+//----------------------------------------------------------------------------
 void printAllJobInfo(JobInfoT* p_jobHead)
 {
    JobInfoT* p_job = NULL;
@@ -160,14 +153,17 @@ void printAllJobInfo(JobInfoT* p_jobHead)
    }
 }
 
+//----------------------------------------------------------------------------
+// Print Job's information
+//----------------------------------------------------------------------------
 void printJobInfo(JobInfoT* p_job)
 {
    if (p_job)
    {
       printf("job name: %s\n"\
-             " job path: %s\n"\
-             " status file: %s\n"\
-             " last status file: %s\n",\
+             "job path: %s\n"\
+             "status file: %s\n"\
+             "last status file: %s\n",\
              p_job->jobName,
              p_job->jobPath,
              p_job->statusInfoFile,
@@ -235,21 +231,21 @@ bool parseJobsInfo(xmlDoc *doc, xmlNode *jobsNode, JobInfoT** p_headJob)
    JobInfoT* p_curJob = NULL;
    for (jobNode = jobsNode->children; jobNode; jobNode = jobNode->next)
    {
-      if (jobNode->type == XML_ELEMENT_NODE) 
+      if (jobNode->type == XML_ELEMENT_NODE)
       {
          if (!strcmp(jobNode->name, "job"))
          {
             JobInfoT jobInfoTemp;
             memset(&jobInfoTemp, 0, sizeof(JobInfoT));
             if (parseJobAttr(doc, jobNode, &jobInfoTemp))
-            { 
+            {
                if (!p_curJob)
                {
                   // First time -> head job = NULL
                   // Allocate memory for head job
                   p_curJob = malloc(sizeof(JobInfoT));
                   memset(p_curJob, 0, sizeof(JobInfoT));
-                  *p_headJob = p_curJob; 
+                  *p_headJob = p_curJob;
                }
                else
                {
@@ -258,7 +254,7 @@ bool parseJobsInfo(xmlDoc *doc, xmlNode *jobsNode, JobInfoT** p_headJob)
                   p_curJob = p_curJob->p_nextJob;
                }
 
-               // Get all job data to current job 
+               // Get all job data to current job
                *p_curJob = jobInfoTemp;
                p_curJob->p_nextJob = NULL;
             }
@@ -267,7 +263,7 @@ bool parseJobsInfo(xmlDoc *doc, xmlNode *jobsNode, JobInfoT** p_headJob)
                printf("Can not parse job attribute\n");
                return false;
             }
-            
+
          }
          else
          {
@@ -291,9 +287,9 @@ bool parseGroupAttr(xmlDoc *doc, xmlNode *groupNode, GroupInfoT* p_group)
    }
    xmlNode* groupAttrNode = NULL;
    for (groupAttrNode = groupNode->children; groupAttrNode;
-        groupAttrNode = groupAttrNode->next) 
+        groupAttrNode = groupAttrNode->next)
    {
-      if (groupAttrNode->type == XML_ELEMENT_NODE) 
+      if (groupAttrNode->type == XML_ELEMENT_NODE)
       {
          if ((!strcmp(groupAttrNode->name, "groupname")) ||
              (!strcmp(groupAttrNode->name, "server")) ||
@@ -438,6 +434,26 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
          printf("Init mutex fail\n");
          exit(1);
       }
+
+      // TODO may be we should allow user config this color through xml file
+      p_group->stdLed.disable.color = NON_COLOR ;
+      p_group->stdLed.disable.isAnime = false ;
+
+      p_group->stdLed.building.color = YEL_COLOR;
+      p_group->stdLed.building.isAnime = true;
+
+      p_group->stdLed.threshold.color = YEL_COLOR;
+      p_group->stdLed.threshold.isAnime = false ;
+
+      p_group->stdLed.success.color = BLU_COLOR;
+      p_group->stdLed.success.isAnime = false ;
+
+      p_group->stdLed.successNotShow.color = NON_COLOR;
+      p_group->stdLed.successNotShow.isAnime = false ;
+
+      p_group->stdLed.fail.color = RED_COLOR;
+      p_group->stdLed.fail.isAnime = true;
+
       // Init CurlTime value
       // TODO: should use Ping or sth like that to get network speed between
       //       current computer and jenkins server, then change this value frequently
@@ -446,7 +462,7 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
       p_group->curlTime.maxTime = 60;
       p_group->curlTime.pollTime = 3;
 
-      p_group->curSta.isBuilding = false; 
+      p_group->curSta.isBuilding = false;
       p_group->curSta.isSuccess = false;
       p_group->curSta.isThreshold = false;
       p_group->curSta.isAllDisable = true;
@@ -454,7 +470,7 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
 }
 
 //----------------------------------------------------------------------------
-// Parsing XML file and append data to All group database 
+// Parsing XML file and append data to All group database
 //----------------------------------------------------------------------------
 bool parseXMLFile(const char* fileName, GroupInfoT** pp_headGroup)
 {
@@ -467,13 +483,13 @@ bool parseXMLFile(const char* fileName, GroupInfoT** pp_headGroup)
    xmlNode* rootNode = NULL;
    xmlNode* groupNode = NULL;
 	LIBXML_TEST_VERSION
-      
+
    if ((doc = xmlReadFile(fileName, NULL, 0)) == NULL)
    {
       printf("Can not xmlReadFile\n");
       return false;
    }
-   
+
    // Get root node of XML file
    rootNode = xmlDocGetRootElement(doc);
 
@@ -498,10 +514,10 @@ bool parseXMLFile(const char* fileName, GroupInfoT** pp_headGroup)
                memset(&groupInfoTemp, 0, sizeof(groupInfoTemp));
                if (parseGroupAttr(doc, groupNode, &groupInfoTemp))
                {
-                  if (!p_curGroup) 
+                  if (!p_curGroup)
                   {
-                     // Allocate memory for head group 
-                     p_curGroup = malloc(sizeof(GroupInfoT)); 
+                     // Allocate memory for head group
+                     p_curGroup = malloc(sizeof(GroupInfoT));
                      memset(p_curGroup, 0, sizeof(GroupInfoT));
                      *pp_headGroup = p_curGroup;
                   }
@@ -538,19 +554,19 @@ bool parseXMLFile(const char* fileName, GroupInfoT** pp_headGroup)
 	xmlCleanupParser();
 
    return true;
-} 
+}
 
 //----------------------------------------------------------------------------
 // This function is use for parsing all argument in command line
 //----------------------------------------------------------------------------
 bool parseArgument(int argc, char* argv[])
 {
-   int indexArg; 
+   int indexArg;
    for (indexArg = 1; indexArg < argc; indexArg++)
    {
-      if (!strcmp(argv[indexArg], "-f") && (argc > indexArg + 1)) 
+      if (!strcmp(argv[indexArg], "-f") && (argc > indexArg + 1))
       {
-        g_xmlFile = argv[++indexArg]; 
+        g_xmlFile = argv[++indexArg];
       }
       else if (!strcmp(argv[indexArg], "--verbose") ||
                !strcmp(argv[indexArg], "-v"))
@@ -561,11 +577,6 @@ bool parseArgument(int argc, char* argv[])
                !strcmp(argv[indexArg], "-r"))
       {
          g_isCtrlRealLed = true;
-      }
-      else if (!strcmp(argv[indexArg], "--allowanime") ||
-               !strcmp(argv[indexArg], "-a"))
-      {
-         g_isAllowAnime = true; 
       }
       else if (!strcmp(argv[indexArg], "--daemon") ||
                !strcmp(argv[indexArg], "-d"))
@@ -585,12 +596,12 @@ bool parseArgument(int argc, char* argv[])
                 "default xml config file is /opt/jobsJenkinConfig.xml, if we want to change use -f\n"
                 "default infoFiles directory is /opt/infoFiles, if we want to change to current path -> use -c\n"
                 "./jenkin_mon\n"
-                "./jenkin_mon -f configFILE.xml --currentPath --verbose --realled --allowanime --daemon\n"
-                "./jenkin_mon -f configFILE.xml -c            -v        -r        -a           -d\n");
+                "./jenkin_mon -f configFILE.xml --currentPath --verbose --realled --daemon\n"
+                "./jenkin_mon -f configFILE.xml -c            -v        -r        -d\n");
          exit(0);
       }
    }
-   
+
    return true;
 }
 
@@ -638,7 +649,7 @@ bool buildJobFiles(GroupInfoT* p_headGroup)
             return false;
          }
       }
-   } 
+   }
    else
    {
       printf("Do not have group in data base\n");
@@ -659,10 +670,10 @@ void colorFromFile(char* fileName, char* colorStr, size_t strSize)
    if (!file)
    {
       printf("can not openfile: %s, error: %s\n", fileName, strerror(errno));
-      return; 
+      return;
    }
    if (fgets(colorLine, sizeof(colorLine), file))
-   { 
+   {
       if (sscanf(colorLine, "  \"color\" : \"%[^\"]", colorStr) != 1)
       {
          printf("get color failed.\n");
@@ -716,33 +727,17 @@ int64 timeStampFromFile(char* fileName)
 }
 
 //----------------------------------------------------------------------------
-// Get current from "date" command timestamp in second resolution 
+// Get current from "date" command timestamp in second resolution
 //----------------------------------------------------------------------------
 int64 currentTimeStamp(void)
 {
    int64 timeStamp = 0;
-#if 0
-   char* dateCommand = "date +%s";
-   char timeStampStr[30];
-   FILE* file = popen(dateCommand, "r");
-   if (!file)
-   {
-      printf("can not get timestamp\n");
-      return timeStamp;
-   }
-   if (fgets(timeStampStr, sizeof(timeStampStr), file))
-   {
-      timeStamp = atoll(timeStampStr);
-   }
-   fclose(file);
-#else
    struct timespec currentTime;
    if (clock_gettime(CLOCK_REALTIME, &currentTime) == -1)
    {
       printf("Can not get current time: %s\n", strerror(errno));
    }
    timeStamp = (int64)currentTime.tv_sec;
-#endif
    return timeStamp;
 }
 
@@ -767,7 +762,7 @@ LedInfoT convert2LedInfo(char* colorStr)
 
    Color2LedInfoT* pColor2Led = C2LInfo;
    while ((pColor2Led->color != NON_COLOR) &&
-          (strcmp(colorStr, pColor2Led->colorStr))) 
+          (strcmp(colorStr, pColor2Led->colorStr)))
    {
       pColor2Led++;
    }
@@ -777,9 +772,17 @@ LedInfoT convert2LedInfo(char* colorStr)
 
 //----------------------------------------------------------------------------
 // Convert led Status to color string
+// Note: need to free pointer to string that are return from this function
 //----------------------------------------------------------------------------
+#if 0
 char* convert2ColorStr(LedInfoT led)
 {
+   // If we write code like this -> race conditions
+   // If two thread call this function at the same time
+   // -> colorStr is static -> like global variable
+   // -> the same value is return for both thread!
+   // XXX: -> should not use static for local variable!
+
    static char colorStr[20];
    Color2LedInfoT* pColor2Led = C2LInfo;
    while ((pColor2Led->color != NON_COLOR) &&
@@ -792,17 +795,49 @@ char* convert2ColorStr(LedInfoT led)
    {
       strcat(colorStr, "_anime");
    }
-
    return colorStr;
 }
+#else
+void convert2ColorStr(LedInfoT led, char* colorStr, u_int32 strLength)
+{
+   Color2LedInfoT* pColor2Led = C2LInfo;
+   while ((pColor2Led->color != NON_COLOR) &&
+          (led.color != pColor2Led->color))
+   {
+      pColor2Led++;
+   }
 
+   u_int32 tempStrLen = snprintf(colorStr, strLength, "%s", pColor2Led->colorStr);
+   if (tempStrLen > strLength)
+   {
+      printf("Do not enough size to store string\n");
+   }
+   else
+   {
+      strLength -= tempStrLen;
+   }
+
+   if (led.isAnime)
+   {
+      if (strLength > strlen("_anime"))
+      {
+         strcat(colorStr, "_anime");
+      }
+      else
+      {
+         printf("Do not enough size to store string\n");
+      }
+   }
+}
+
+#endif
 //----------------------------------------------------------------------------
 // Convert RGB gpio status to color string
 //----------------------------------------------------------------------------
 char* convertRgb2ColorStr(GpioStatusE r, GpioStatusE g, GpioStatusE b)
 {
    Color2LedInfoT* pColor2Led = C2LInfo;
-   pColor2Led += 2; //if (r,g,b) = (OF, OF, OF), i want to show "noColor"
+   pColor2Led += 2; //if (r,g,b) = (OF, OF, OF), This function should return "noColor"
                     //instead of "notbuilt" or "disabled",
                     // => ignore these 2 lines in searching
    while ((pColor2Led->color != NON_COLOR) &&
@@ -823,7 +858,8 @@ LedInfoT ledInfoFromfile(char* fileName)
    LedInfoT ledInfo = convert2LedInfo(colorStr);
    if (g_isVerbose)
    {
-      printf("Get color from file %s: %s\n", fileName, convert2ColorStr(ledInfo));
+      convert2ColorStr(ledInfo, colorStr, 20);
+      printf("Get color from file %s: %s\n", fileName, colorStr);
    }
    return ledInfo;
 }
@@ -918,7 +954,7 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
    GpioStatusE b = OF;
 
    // Decide next state for Led
-   if (g_isAllowAnime && led.isAnime)
+   if (led.isAnime)
    {
       // Specify current state for all Leds
       GpioStatusE currentState;
@@ -972,14 +1008,14 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
    else
    {
       printf("\n%s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
-             convertRgb2ColorStr(r,g,b), red, green, blue, r, g, b);  
+             convertRgb2ColorStr(r,g,b), red, green, blue, r, g, b);
    }
 }
 
 //----------------------------------------------------------------------------
 // Control led only by setting value to GPIO
 //----------------------------------------------------------------------------
-void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed, char* stuffInfoStr) 
+void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed, char* stuffInfoStr)
 {
    Color2LedInfoT* pColor2Led = C2LInfo;
    while ((pColor2Led->color != NON_COLOR) &&
@@ -994,9 +1030,9 @@ void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed, char* stuffI
 
    if (gpioState == ON)
    {
-      r = pColor2Led->r; 
-      g = pColor2Led->g; 
-      b = pColor2Led->b; 
+      r = pColor2Led->r;
+      g = pColor2Led->g;
+      b = pColor2Led->b;
    }
 
    // Set value for GPIO -> control Led
@@ -1011,7 +1047,7 @@ void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed, char* stuffI
       printf("\nGroup %s's LED color: %s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
              stuffInfoStr, convertRgb2ColorStr(r,g,b),
              gpioLed.redLed, gpioLed.greLed, gpioLed.bluLed,
-             r, g, b);  
+             r, g, b);
    }
 }
 
@@ -1025,7 +1061,7 @@ bool buildEvalGrpColorTheads(GroupInfoT* p_headGroup)
    GroupInfoT* p_group = NULL;
    for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
    {
-      if (pthread_create(&p_group->evalColorThread, NULL, evalGrpColorPoll, p_group)) 
+      if (pthread_create(&p_group->evalColorThread, NULL, evalGrpColorPoll, p_group))
       {
          areAllOk = false;
          break;
@@ -1077,7 +1113,7 @@ bool buildCurlCmd(GroupInfoT* p_group, char* curlCommand, u_int32 curlCommandSiz
    u_int32 remainLen = curlCommandSize;
    u_int32 len;
 
-#if USE_ANY_AUTHORIZED_IN_CURL 
+#if USE_ANY_AUTHORIZED_IN_CURL
    len = snprintf(curlCommand, remainLen, "curl --silent --max-time %d --anyauth ",
                   p_group->curlTime.maxTime);
 #else
@@ -1100,11 +1136,11 @@ bool buildCurlCmd(GroupInfoT* p_group, char* curlCommand, u_int32 curlCommandSiz
       {
          // Build command to get status of Job
          char* pStatusCmd = malloc(remainLen * sizeof(*pStatusCmd));
-         len = snprintf(pStatusCmd, remainLen, 
+         len = snprintf(pStatusCmd, remainLen,
                         " %s%s%s/api/json?pretty=true\\&"\
                         "tree=name,color -o %s",
                         p_group->server.serverName, p_job->jobPath, p_job->jobName,
-                        p_job->statusInfoFile); 
+                        p_job->statusInfoFile);
          if (len >= remainLen)
          {
             free(pStatusCmd);
@@ -1123,7 +1159,7 @@ bool buildCurlCmd(GroupInfoT* p_group, char* curlCommand, u_int32 curlCommandSiz
                        " %s%s%s/lastBuild/api/json?pretty=true\\&"\
                        "tree=fullDisplayName,id,timestamp,result -o %s",
                        p_group->server.serverName, p_job->jobPath, p_job->jobName,
-                       p_job->lastBuildInfoFile); 
+                       p_job->lastBuildInfoFile);
          if (len >= remainLen)
          {
             free(pLastBuildCmd);
@@ -1179,7 +1215,7 @@ bool executeCurlCmd(char* curlCommand)
    }
 
    while (fgets(curlDoneStr, sizeof(curlDoneStr), file) != NULL)
-   { 
+   {
       pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
       pthread_mutex_unlock(&g_terminateLock);
@@ -1213,6 +1249,8 @@ void evaluateColor(GroupInfoT* p_group)
    if (g_isVerbose)
    {
       char str[100];
+      char colorStr[20];
+      convert2ColorStr(p_group->ledStatus, colorStr, 20);
       snprintf(str, 100, "%s - %s - %s- %s",
                (p_group->curSta.isAllDisable) ?  "Disable"   : " ",
                (p_group->curSta.isThreshold)  ?  "Threshold" : " ",
@@ -1220,8 +1258,8 @@ void evaluateColor(GroupInfoT* p_group)
                (p_group->curSta.isSuccess)    ?  "Success"   : "False ");
 
       printf("\nGroup %s\ngroup status:%s; led status: %s\n\n",
-             p_group->groupName, str, convert2ColorStr(p_group->ledStatus));
-             
+             p_group->groupName, str, colorStr);
+
    }
 }
 
@@ -1231,7 +1269,7 @@ void evaluateColor(GroupInfoT* p_group)
 void evalGroupStatus(GroupInfoT* p_group)
 {
    p_group->preSta = p_group->curSta;
-   p_group->curSta.isBuilding = false; 
+   p_group->curSta.isBuilding = false;
    p_group->curSta.isSuccess = true;
    p_group->curSta.isThreshold = false;
    p_group->curSta.isAllDisable = true;
@@ -1243,19 +1281,29 @@ void evalGroupStatus(GroupInfoT* p_group)
       p_group->curSta.isAllDisable = p_group->curSta.isAllDisable &&
          ((jobLedInfo.color == NO_BUILT) || (jobLedInfo.color == DISABLED));
       if ((jobLedInfo.color != NO_BUILT) &&
-            (jobLedInfo.color != DISABLED)) 
+            (jobLedInfo.color != DISABLED))
       {
          p_group->curSta.isSuccess = p_group->curSta.isSuccess &&
                                      (jobLedInfo.color == BLU_COLOR);
 
-         p_group->curSta.isBuilding = p_group->curSta.isBuilding || jobLedInfo.isAnime; 
+         p_group->curSta.isBuilding = p_group->curSta.isBuilding || jobLedInfo.isAnime;
 
          int64 jobTime = timeStampFromFile(p_job->lastBuildInfoFile);
          int64 curTime = currentTimeStamp();
-         p_group->curSta.isThreshold = p_group->curSta.isThreshold || 
-                           ((curTime - jobTime) > (int64)p_group->lastBuildThreshold); 
+         p_group->curSta.isThreshold = p_group->curSta.isThreshold ||
+                           ((curTime - jobTime) > (int64)p_group->lastBuildThreshold);
       }
    }
+}
+
+//----------------------------------------------------------------------------
+// assign Group's Led Status
+//----------------------------------------------------------------------------
+void assignGrpLedStatus(GroupInfoT* p_group, LedInfoT ledInfo)
+{
+   pthread_mutex_lock(&p_group->lockLedSta);
+   p_group->ledStatus = ledInfo;
+   pthread_mutex_unlock(&p_group->lockLedSta);
 }
 
 //----------------------------------------------------------------------------
@@ -1263,20 +1311,15 @@ void evalGroupStatus(GroupInfoT* p_group)
 //----------------------------------------------------------------------------
 void evalLedStatus(GroupInfoT* p_group)
 {
-   pthread_mutex_lock(&p_group->lockLedSta);
-#if 1
    if (p_group->curSta.isAllDisable)
    {
-      p_group->ledStatus.color = NON_COLOR;
-      p_group->ledStatus.isAnime = false;
+      assignGrpLedStatus(p_group, p_group->stdLed.disable);
    }
    else
    {
-
       if (p_group->curSta.isBuilding)
       {
-         p_group->ledStatus.color = YEL_COLOR;
-         p_group->ledStatus.isAnime = true;
+         assignGrpLedStatus(p_group, p_group->stdLed.building);
       }
       else
       {
@@ -1284,8 +1327,7 @@ void evalLedStatus(GroupInfoT* p_group)
          {
             if (p_group->curSta.isThreshold)
             {
-               p_group->ledStatus.color = YEL_COLOR;
-               p_group->ledStatus.isAnime = false;
+               assignGrpLedStatus(p_group, p_group->stdLed.threshold);
             }
             else
             {
@@ -1302,10 +1344,9 @@ void evalLedStatus(GroupInfoT* p_group)
                      if ((curTime - p_group->lastSuccessTimeStamp) >
                          (int64)p_group->displaySuccessTimeout)
                      {
-                        p_group->ledStatus.color = NON_COLOR;
-                        p_group->ledStatus.isAnime = false;
+                        assignGrpLedStatus(p_group, p_group->stdLed.successNotShow);
 
-                        // Turn off LED -> don't need to check timestamp anymore
+                        // LED is turned off -> don't need to check timestamp anymore
                         p_group->needToCheckTimeStamp = false;
                      }
                   }
@@ -1316,83 +1357,16 @@ void evalLedStatus(GroupInfoT* p_group)
                   p_group->lastSuccessTimeStamp = currentTimeStamp();
                   p_group->needToCheckTimeStamp = true;
 
-                  p_group->ledStatus.color = BLU_COLOR;
-                  p_group->ledStatus.isAnime = false;
+                  assignGrpLedStatus(p_group, p_group->stdLed.success);
                }
             }
          }
          else
          {
-            p_group->ledStatus.color = RED_COLOR;
-            p_group->ledStatus.isAnime = true;
+            assignGrpLedStatus(p_group, p_group->stdLed.fail);
          }
       }
    }
-#else
-   if (p_group->curSta.isAllDisable)
-   {
-      p_group->ledStatus.color = NON_COLOR;
-      p_group->ledStatus.isAnime = false;
-   }
-   else
-   {
-      if (p_group->curSta.isThreshold)
-      {
-         p_group->ledStatus.color = YEL_COLOR;
-         p_group->ledStatus.isAnime = false;
-      }
-      else
-      {
-         if (p_group->curSta.isBuilding)
-         {
-            p_group->ledStatus.color = YEL_COLOR;
-            p_group->ledStatus.isAnime = true;
-         }
-         else
-         {
-            if (p_group->curSta.isSuccess)
-            {
-               if (!p_group->preSta.isAllDisable &&
-                   !p_group->preSta.isThreshold &&
-                   !p_group->preSta.isBuilding &&
-                   p_group->preSta.isSuccess)
-               {
-                  //Previous status is full success as current status
-                  if (p_group->needToCheckTimeStamp)
-                  {
-                     //Check timestamp to turn off Led
-                     int64 curTime = currentTimeStamp();
-                     if ((curTime - p_group->lastSuccessTimeStamp) >
-                         (int64)p_group->displaySuccessTimeout)
-                     {
-                        p_group->ledStatus.color = NON_COLOR;
-                        p_group->ledStatus.isAnime = false;
-
-                        // Turn off LED -> don't need to check timestamp anymore
-                        p_group->needToCheckTimeStamp = false;
-                     }
-                  }
-               }
-               else
-               {
-                  //First time full success occur -> Store timestamp
-                  p_group->lastSuccessTimeStamp = currentTimeStamp();
-                  p_group->needToCheckTimeStamp = true;
-
-                  p_group->ledStatus.color = BLU_COLOR;
-                  p_group->ledStatus.isAnime = false;
-               }
-            }
-            else
-            {
-               p_group->ledStatus.color = RED_COLOR;
-               p_group->ledStatus.isAnime = true;
-            }
-         }
-      }
-   }
-#endif
-   pthread_mutex_unlock(&p_group->lockLedSta);
 }
 
 //----------------------------------------------------------------------------
@@ -1419,8 +1393,8 @@ bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup)
 void* ctrlGrpLedPoll(void *arg)
 {
    GroupInfoT* p_group = (GroupInfoT*)arg;
-   LedInfoT preLedSta; 
-   LedInfoT curLedSta; 
+   LedInfoT preLedSta;
+   LedInfoT curLedSta;
    GpioStatusE gpioSta;
 
    preLedSta.color = NON_COLOR;
@@ -1440,19 +1414,21 @@ void* ctrlGrpLedPoll(void *arg)
       curLedSta = p_group->ledStatus;
       pthread_mutex_unlock(&p_group->lockLedSta);
 
-      // Check if previous Led status and current Led status is the same or not 
+      // Check if previous Led status and current Led status is the same or not
       if ((preLedSta.color == curLedSta.color) &&
           (preLedSta.isAnime == curLedSta.isAnime))
       {
-         if (g_isAllowAnime && curLedSta.isAnime)
+         if (curLedSta.isAnime)
          {
             gpioSta = (gpioSta == ON) ? OF : ON;
             ledCtrl(curLedSta.color, gpioSta, p_group->gpio, p_group->groupName);
          }
          else
          {
+            char colorStr[20];
+            convert2ColorStr(curLedSta, colorStr, 20);
             printf("\nGroup %s's LED color: %s , led will not blink and led color is the same as before\n",
-                   p_group->groupName, convert2ColorStr(curLedSta));
+                   p_group->groupName, colorStr);
          }
       }
       else
@@ -1496,7 +1472,7 @@ void cleanAllGroupInfo(GroupInfoT* p_headGroup)
       p_headGroup = p_headGroup->p_nextGroup;
 
       // Clean All Jobs in Group
-      JobInfoT* p_headJob = p_tempGroup->p_allJobs; 
+      JobInfoT* p_headJob = p_tempGroup->p_allJobs;
       JobInfoT* p_tempJob = NULL;
       while (p_headJob)
       {
@@ -1571,7 +1547,7 @@ int main(int argc, char *argv[])
 	while (signal(SIGINT, sig_term) == SIG_ERR) {
 		printf("signal() failed: %s", strerror(errno));
 	}
-   
+
    GroupInfoT* p_allGroups = NULL;
 
    // Parse XML file
@@ -1589,7 +1565,7 @@ int main(int argc, char *argv[])
    }
 
    printAllGroupInfo(p_allGroups);
-   
+
    // Init Stuff of All Groups database
    initStuffOfAllGroup(p_allGroups);
 
