@@ -173,3 +173,6 @@ void evalLedStatus(GroupInfoT* p_group);
 // Build threads to control led for each group'
 bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup);
 void* ctrlGrpLedPoll(void* arg);
+
+void waitAllThreadsStop(GroupInfoT* p_headGroup);
+void cleanAllGroupInfo(GroupInfoT* p_headGroup);

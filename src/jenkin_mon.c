@@ -88,6 +88,9 @@ bool g_isDaemon = false;
 static bool g_terminateAll = false;
 static pthread_mutex_t g_terminateLock; 
  
+//----------------------------------------------------------------------------
+// Handle for SIGINT and SIGTERM
+//----------------------------------------------------------------------------
 static void sig_term(int isig)
 {
    pthread_mutex_lock(&g_terminateLock);
@@ -95,6 +98,9 @@ static void sig_term(int isig)
    pthread_mutex_unlock(&g_terminateLock);
 }
 
+//----------------------------------------------------------------------------
+// Handle for SIGCHLD
+//----------------------------------------------------------------------------
 static void sig_chld(int sig)
 {
 	/*
@@ -104,6 +110,9 @@ static void sig_chld(int sig)
 	 */
 }
 
+//----------------------------------------------------------------------------
+// Exit program, try to terminate all threads before exit
+//----------------------------------------------------------------------------
 static void exitNow()
 {
    pthread_mutex_lock(&g_terminateLock);
@@ -180,15 +189,21 @@ bool parseJobAttr(xmlDoc *doc, xmlNode *jobNode, JobInfoT* p_job)
    {
       if (jobAttrNode->type == XML_ELEMENT_NODE)
       {
-         if (!strcmp(jobAttrNode->name, "jobpath"))
+         if ((!strcmp(jobAttrNode->name, "jobpath")) ||
+             (!strcmp(jobAttrNode->name, "jobname")))
          {
-            p_job->jobPath =
-               xmlNodeListGetString(doc, jobAttrNode->xmlChildrenNode, 1);
-         }
-         else if (!strcmp(jobAttrNode->name, "jobname"))
-         {
-            p_job->jobName = 
-               xmlNodeListGetString(doc, jobAttrNode->xmlChildrenNode, 1);
+            xmlChar* key = xmlNodeListGetString(doc, jobAttrNode->xmlChildrenNode, 1);
+            if (!strcmp(jobAttrNode->name, "jobpath"))
+            {
+               p_job->jobPath = malloc((strlen(key) + 1) * sizeof(char));
+               strcpy(p_job->jobPath, key);
+            }
+            else if (!strcmp(jobAttrNode->name, "jobname"))
+            {
+               p_job->jobName = malloc((strlen(key) + 1) * sizeof(char));
+               strcpy(p_job->jobName, key);
+            }
+            xmlFree(key);
          }
          else
          {
@@ -278,50 +293,59 @@ bool parseGroupAttr(xmlDoc *doc, xmlNode *groupNode, GroupInfoT* p_group)
    {
       if (groupAttrNode->type == XML_ELEMENT_NODE) 
       {
-         if (!strcmp(groupAttrNode->name, "groupname"))
+         if ((!strcmp(groupAttrNode->name, "groupname")) ||
+             (!strcmp(groupAttrNode->name, "server")) ||
+             (!strcmp(groupAttrNode->name, "username")) ||
+             (!strcmp(groupAttrNode->name, "password")) ||
+             (!strcmp(groupAttrNode->name, "red_led")) ||
+             (!strcmp(groupAttrNode->name, "green_led")) ||
+             (!strcmp(groupAttrNode->name, "blue_led")) ||
+             (!strcmp(groupAttrNode->name, "display_timeout")) ||
+             (!strcmp(groupAttrNode->name, "last_build_threshold")))
          {
-            p_group->groupName =
-               xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1);
-         }
-         else if (!strcmp(groupAttrNode->name, "server"))
-         {
-            p_group->server.serverName =
-               xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1);
-         }
-         else if (!strcmp(groupAttrNode->name, "username"))
-         {
-            p_group->server.userName =
-               xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1);
-         }
-         else if (!strcmp(groupAttrNode->name, "password"))
-         {
-            p_group->server.passWord =
-               xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1);
-         }
-         else if (!strcmp(groupAttrNode->name, "red_led"))
-         {
-            p_group->gpio.redLed =
-               atoi(xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1));
-         }
-         else if (!strcmp(groupAttrNode->name, "green_led"))
-         {
-            p_group->gpio.greLed =
-               atoi(xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1));
-         }
-         else if (!strcmp(groupAttrNode->name, "blue_led"))
-         {
-            p_group->gpio.bluLed =
-               atoi(xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1));
-         }
-         else if (!strcmp(groupAttrNode->name, "display_timeout"))
-         {
-            p_group->displaySuccessTimeout =
-               atoi(xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1));
-         }
-         else if (!strcmp(groupAttrNode->name, "last_build_threshold"))
-         {
-            p_group->lastBuildThreshold=
-               atoi(xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1));
+            xmlChar* key = xmlNodeListGetString(doc, groupAttrNode->xmlChildrenNode, 1);
+            if (!strcmp(groupAttrNode->name, "groupname"))
+            {
+               p_group->groupName = malloc((strlen(key) + 1) * sizeof(char));
+               strcpy(p_group->groupName, key);
+            }
+            else if (!strcmp(groupAttrNode->name, "server"))
+            {
+               p_group->server.serverName = malloc((strlen(key) + 1) * sizeof(char));
+               strcpy(p_group->server.serverName, key);
+            }
+            else if (!strcmp(groupAttrNode->name, "username"))
+            {
+               p_group->server.userName = malloc((strlen(key) + 1) * sizeof(char));
+               strcpy(p_group->server.userName, key);
+            }
+            else if (!strcmp(groupAttrNode->name, "password"))
+            {
+               p_group->server.passWord = malloc((strlen(key) + 1) * sizeof(char));
+               strcpy(p_group->server.passWord, key);
+            }
+            else if (!strcmp(groupAttrNode->name, "red_led"))
+            {
+               p_group->gpio.redLed = atoi(key);
+
+            }
+            else if (!strcmp(groupAttrNode->name, "green_led"))
+            {
+               p_group->gpio.greLed = atoi(key);
+            }
+            else if (!strcmp(groupAttrNode->name, "blue_led"))
+            {
+               p_group->gpio.bluLed = atoi(key);
+            }
+            else if (!strcmp(groupAttrNode->name, "display_timeout"))
+            {
+               p_group->displaySuccessTimeout = atoi(key);
+            }
+            else if (!strcmp(groupAttrNode->name, "last_build_threshold"))
+            {
+               p_group->lastBuildThreshold= atoi(key);
+            }
+            xmlFree(key);
          }
          else if (!strcmp(groupAttrNode->name, "jobs"))
          {
@@ -642,7 +666,16 @@ int64 timeStampFromFile(char* fileName)
    }
    char grepCommand[100];
    char timeStampLine[50];
+#if 0
+   // Bug in valgrind: "Use of uninitialised value of size 8"
+   // because we use timeStampStr variable in later atoll(timeStampStr)
+   // We should init for this string
    char timeStampStr[30];
+#else
+   char timeStampStr[30];
+   timeStampStr[0] = 0;
+#endif
+
    sprintf(grepCommand, "grep \"timestamp\" %s", fileName);
    FILE* file = popen(grepCommand, "r");
    if (!file)
@@ -1116,6 +1149,7 @@ bool buildCurlCmd(GroupInfoT* p_group, char* curlCommand, u_int32 curlCommandSiz
 //----------------------------------------------------------------------------
 bool executeCurlCmd(char* curlCommand)
 {
+   // TODO: should use CURL api function instead of execute curl command in shell
    char curlDoneStr[100];
    FILE* file;
    // XXX : by using system() function, we can not receive SIGTERM or
@@ -1363,6 +1397,55 @@ bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup)
 }
 
 //----------------------------------------------------------------------------
+// Wait until all threads have been stopped
+//----------------------------------------------------------------------------
+void waitAllThreadsStop(GroupInfoT* p_headGroup)
+{
+   GroupInfoT* p_group = NULL;
+   for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
+   {
+      if (pthread_join(p_group->evalColorThread, NULL) ||
+          pthread_join(p_group->ctrlLedThread, NULL))
+      {
+         printf("Can not join threads\n");
+         exit(1);
+      }
+   }
+}
+
+//----------------------------------------------------------------------------
+// Cleanup all Group information
+//----------------------------------------------------------------------------
+void cleanAllGroupInfo(GroupInfoT* p_headGroup)
+{
+   GroupInfoT* p_tempGroup = NULL;
+   while (p_headGroup)
+   {
+      p_tempGroup = p_headGroup;
+      p_headGroup = p_headGroup->p_nextGroup;
+
+      // Clean All Jobs in Group
+      JobInfoT* p_headJob = p_tempGroup->p_allJobs; 
+      JobInfoT* p_tempJob = NULL;
+      while (p_headJob)
+      {
+         p_tempJob = p_headJob;
+         p_headJob = p_headJob->p_nextJob;
+         free(p_tempJob->jobPath);
+         free(p_tempJob->jobName);
+         free(p_tempJob);
+      }
+
+      free(p_tempGroup->groupName);
+      free(p_tempGroup->server.serverName);
+      free(p_tempGroup->server.userName);
+      free(p_tempGroup->server.passWord);
+      pthread_mutex_destroy(&p_tempGroup->lockLedSta);
+      free(p_tempGroup);
+   }
+}
+
+//----------------------------------------------------------------------------
 // Poll to control all led for group
 //----------------------------------------------------------------------------
 void* ctrlGrpLedPoll(void *arg)
@@ -1452,23 +1535,23 @@ int main(int argc, char *argv[])
       close(2); //Close standard error stderr
    }
 
+	// Make sure SIGCHLD is not SIG_IGN
+	while (signal(SIGCHLD, sig_chld) == SIG_ERR) {
+		printf("signal() failed: %s", strerror(errno));
+	}
+
    if (pthread_mutex_init(&g_terminateLock, NULL))
    {
       printf("Can not init mutex for terminate flag\n");
       exit(1);
    }
 
-	/* Make sure SIGCHLD is not SIG_IGN */
-	while (signal(SIGCHLD, sig_chld) == SIG_ERR) {
-		printf("signal() failed: %s", strerror(errno));
-	}
-
-	/* Catch SIGTERM */
+	// register SIGTERM handle
 	while (signal(SIGTERM, sig_term) == SIG_ERR) {
 		printf("signal() failed: %s", strerror(errno));
 	}
 
-	/* Catch SIGINT */
+	// register SIGINT hanlde
 	while (signal(SIGINT, sig_term) == SIG_ERR) {
 		printf("signal() failed: %s", strerror(errno));
 	}
@@ -1511,23 +1594,18 @@ int main(int argc, char *argv[])
       printf("Can not build control led threads\n");
    }
 
-   //Main thread will wait until g_terminateAll is true
+#if 0
+   // DEAD lock occur if we write code in this way
+   // + Assume SIGINT occur when g_terminateLock is locked (this situation will occur very frequently
+   // because main thread executed these line of code almost time)
+   // + Main thread jump to sigterm() function.
+   // + in sigterm() function, we will wait for g_terminateLock is unlock.
+   // + But g_terminateLock can be unlock anymore, because it is locked in main thread itself!
+   // => deadlock
+
    while (1)
    {
-#if 1 
-      if (g_terminateAll)
-      {
-         break;
-      }
-#else
-      // DEAD lock if we write code in this way
-      // + Assume SIGINT occur when g_terminateLock is locked (this situation will occur very frequently
-      // because main thread executed these line of code almost time)
-      // + Main thread jump to sigterm() function.
-      // + in sigterm() function, we will wait for g_terminateLock is unlock.
-      // + But g_terminateLock can be unlock anymore, because it is locked in main thread itself!
-      // => deadlock
-
+      //Main thread will wait until g_terminateAll is true
       pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
       pthread_mutex_unlock(&g_terminateLock);
@@ -1535,44 +1613,16 @@ int main(int argc, char *argv[])
       {
          break;
       }
-#endif
    }
+#endif
 
    //Waiting for all evaluated Color Threads and Led Control Threads stop
-   GroupInfoT* p_group = NULL;
-   for (p_group = p_allGroups; p_group; p_group = p_group->p_nextGroup)
-   {
-      if (pthread_join(p_group->evalColorThread, NULL) ||
-          pthread_join(p_group->ctrlLedThread, NULL))
-      {
-         printf("Can not join threads\n");
-         exit(1);
-      }
-   }
+   waitAllThreadsStop(p_allGroups);
 
    // Clean all Group and job database /free data...
-   GroupInfoT* p_headGroup = p_allGroups;
-   GroupInfoT* p_tempGroup = NULL;
-   while (p_headGroup)
-   {
-      p_tempGroup = p_headGroup;
-      p_headGroup = p_headGroup->p_nextGroup;
-
-      // Clean All Jobs in Group
-      JobInfoT* p_headJob = p_tempGroup->p_allJobs; 
-      JobInfoT* p_tempJob = NULL;
-      while (p_headJob)
-      {
-         p_tempJob = p_headJob;
-         p_headJob = p_headJob->p_nextJob;
-         free(p_tempJob);
-      }
-
-      pthread_mutex_destroy(&p_tempGroup->lockLedSta);
-      free(p_tempGroup);
-   }
+   cleanAllGroupInfo(p_allGroups);
 
    pthread_mutex_destroy(&g_terminateLock);
-   
+
 	return 0;
 }
