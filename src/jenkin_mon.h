@@ -159,6 +159,7 @@ char* convertRgb2ColorStr(GpioStatusE r, GpioStatusE g, GpioStatusE b);
 
 void initAllGroupLed(GroupInfoT* p_headGroup);
 void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue);
+void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed, char* stuffInfoStr);
 
 // Build threads to Evaluate Color for each Group
 bool buildEvalGrpColorTheads(GroupInfoT* p_headGroup);

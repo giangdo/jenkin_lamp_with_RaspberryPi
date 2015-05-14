@@ -90,9 +90,9 @@ static pthread_mutex_t g_terminateLock;
  
 static void sig_term(int isig)
 {
-   pthread_mutex_lock(&g_terminateLock);
+  // pthread_mutex_lock(&g_terminateLock);
    g_terminateAll = true;
-   pthread_mutex_unlock(&g_terminateLock);
+   //pthread_mutex_unlock(&g_terminateLock);
 }
 
 static void sig_chld(int sig)
@@ -106,9 +106,9 @@ static void sig_chld(int sig)
 
 static void exitNow()
 {
-   pthread_mutex_lock(&g_terminateLock);
+   //pthread_mutex_lock(&g_terminateLock);
    g_terminateAll = true;
-   pthread_mutex_unlock(&g_terminateLock);
+   //pthread_mutex_unlock(&g_terminateLock);
 
 }
 
@@ -407,7 +407,7 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
    GroupInfoT* p_group = NULL;
    for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
    {
-      if (pthread_mutex_init(&p_group->lockLedSta, NULL) != 0)
+      if (pthread_mutex_init(&p_group->lockLedSta, NULL))
       {
          printf("Init mutex fail\n");
          exit(1);
@@ -928,7 +928,7 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
 //----------------------------------------------------------------------------
 // Control led only by setting value to GPIO
 //----------------------------------------------------------------------------
-void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed) 
+void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed, char* stuffInfoStr) 
 {
    Color2LedInfoT* pColor2Led = C2LInfo;
    while ((pColor2Led->color != NON_COLOR) &&
@@ -957,8 +957,8 @@ void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed)
    }
    else
    {
-      printf("%s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
-             convertRgb2ColorStr(r,g,b),
+      printf("Group %s's LED color: %s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
+             stuffInfoStr, convertRgb2ColorStr(r,g,b),
              gpioLed.redLed, gpioLed.greLed, gpioLed.bluLed,
              r, g, b);  
    }
@@ -999,9 +999,9 @@ void* evalGrpColorPoll(void* arg)
 
    while (1)
    {
-      pthread_mutex_lock(&g_terminateLock);
+      //pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
-      pthread_mutex_unlock(&g_terminateLock);
+      //pthread_mutex_unlock(&g_terminateLock);
       if (tempTerminate)
       {
          break;
@@ -1128,9 +1128,9 @@ bool executeCurlCmd(char* curlCommand)
 
    while (fgets(curlDoneStr, sizeof(curlDoneStr), file) != NULL)
    { 
-      pthread_mutex_lock(&g_terminateLock);
+      //pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
-      pthread_mutex_unlock(&g_terminateLock);
+      //pthread_mutex_unlock(&g_terminateLock);
       if (tempTerminate)
       {
          break;
@@ -1142,6 +1142,7 @@ bool executeCurlCmd(char* curlCommand)
    {
       printf("%s\n", curlDoneStr);
    }
+   return true;
 }
 
 //----------------------------------------------------------------------------
@@ -1211,6 +1212,71 @@ void evalGroupStatus(GroupInfoT* p_group)
 void evalLedStatus(GroupInfoT* p_group)
 {
    pthread_mutex_lock(&p_group->lockLedSta);
+#if 1
+   if (p_group->curSta.isAllDisable)
+   {
+      p_group->ledStatus.color = NON_COLOR;
+      p_group->ledStatus.isAnime = false;
+   }
+   else
+   {
+
+      if (p_group->curSta.isBuilding)
+      {
+         p_group->ledStatus.color = YEL_COLOR;
+         p_group->ledStatus.isAnime = true;
+      }
+      else
+      {
+         if (p_group->curSta.isSuccess)
+         {
+            if (p_group->curSta.isThreshold)
+            {
+               p_group->ledStatus.color = YEL_COLOR;
+               p_group->ledStatus.isAnime = false;
+            }
+            else
+            {
+               if (!p_group->preSta.isAllDisable &&
+                   !p_group->preSta.isBuilding   &&
+                   p_group->preSta.isSuccess     &&
+                   !p_group->preSta.isThreshold)
+               {
+                  //Previous status is full success as current status
+                  if (p_group->needToCheckTimeStamp)
+                  {
+                     //Check timestamp to turn off Led
+                     int64 curTime = currentTimeStamp();
+                     if ((curTime - p_group->lastSuccessTimeStamp) >
+                         (int64)p_group->displaySuccessTimeout)
+                     {
+                        p_group->ledStatus.color = NON_COLOR;
+                        p_group->ledStatus.isAnime = false;
+
+                        // Turn off LED -> don't need to check timestamp anymore
+                        p_group->needToCheckTimeStamp = false;
+                     }
+                  }
+               }
+               else
+               {
+                  //First time full success occur -> Store timestamp
+                  p_group->lastSuccessTimeStamp = currentTimeStamp();
+                  p_group->needToCheckTimeStamp = true;
+
+                  p_group->ledStatus.color = BLU_COLOR;
+                  p_group->ledStatus.isAnime = false;
+               }
+            }
+         }
+         else
+         {
+            p_group->ledStatus.color = RED_COLOR;
+            p_group->ledStatus.isAnime = true;
+         }
+      }
+   }
+#else
    if (p_group->curSta.isAllDisable)
    {
       p_group->ledStatus.color = NON_COLOR;
@@ -1273,6 +1339,7 @@ void evalLedStatus(GroupInfoT* p_group)
          }
       }
    }
+#endif
    pthread_mutex_unlock(&p_group->lockLedSta);
 }
 
@@ -1309,17 +1376,12 @@ void* ctrlGrpLedPoll(void *arg)
 
    while (1)
    {
-      pthread_mutex_lock(&g_terminateLock);
+      //pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
-      pthread_mutex_unlock(&g_terminateLock);
+      //pthread_mutex_unlock(&g_terminateLock);
       if (tempTerminate)
       {
          break;
-      }
-
-      if (g_isVerbose)
-      {
-         printf("\nGroup %s: GPIO status\n", p_group->groupName);
       }
 
       pthread_mutex_lock(&p_group->lockLedSta);
@@ -1333,18 +1395,18 @@ void* ctrlGrpLedPoll(void *arg)
          if (g_isAllowAnime && curLedSta.isAnime)
          {
             gpioSta = (gpioSta == ON) ? OF : ON;
-            ledCtrl(curLedSta.color, gpioSta, p_group->gpio);
+            ledCtrl(curLedSta.color, gpioSta, p_group->gpio, p_group->groupName);
          }
          else
          {
-            printf("%s , led will not blink and led color is the same as before\n",
-                   convert2ColorStr(curLedSta));
+            printf("Group %s's LED color: %s , led will not blink and led color is the same as before\n",
+                   p_group->groupName, convert2ColorStr(curLedSta));
          }
       }
       else
       {
          gpioSta = ON;
-         ledCtrl(curLedSta.color, gpioSta, p_group->gpio);
+         ledCtrl(curLedSta.color, gpioSta, p_group->gpio, p_group->groupName);
          preLedSta = curLedSta;
       }
 
@@ -1389,9 +1451,10 @@ int main(int argc, char *argv[])
       close(2); //Close standard error stderr
    }
 
-   if (!pthread_mutex_init(&g_terminateLock, NULL))
+   if (pthread_mutex_init(&g_terminateLock, NULL))
    {
       printf("Can not init mutex for terminate flag\n");
+      exit(1);
    }
 
 	/* Make sure SIGCHLD is not SIG_IGN */
@@ -1450,9 +1513,9 @@ int main(int argc, char *argv[])
    //Main thread will wait until g_terminateAll is true
    while (1)
    {
-      pthread_mutex_lock(&g_terminateLock);
+     // pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
-      pthread_mutex_unlock(&g_terminateLock);
+     // pthread_mutex_unlock(&g_terminateLock);
       if (tempTerminate)
       {
          break;
