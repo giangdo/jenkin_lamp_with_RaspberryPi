@@ -10,6 +10,8 @@
 #include <time.h>
 #include <stdbool.h>
 #include "jenkin_mon.h"
+#include <dirent.h>
+#include <curl/curl.h>
 
 //--------------------------------------------------------------------------------------------------
 // README before read source code
@@ -594,7 +596,22 @@ bool parseArgument(int argc, char* argv[])
 
 bool buildJobFiles(GroupInfoT* p_headGroup)
 {
-   // TODO: need to check g_pathInfoFiles exist or not
+   // Check g_pathInfoFiles exist or not
+   DIR* infoFileDir = opendir(g_pathInfoFiles);
+   if (infoFileDir)
+   {
+      if (closedir(infoFileDir))
+      {
+         printf("There is a problem with infoFiles directory: %s\n", strerror(errno));
+         exit(1);
+      }
+   }
+   else
+   {
+      printf("There is a problem with infoFiles directory: %s\n", strerror(errno));
+      exit(1);
+   }
+
    GroupInfoT* p_group = p_headGroup;
    if (p_group)
    {
@@ -954,7 +971,7 @@ void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
    }
    else
    {
-      printf("%s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
+      printf("\n%s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
              convertRgb2ColorStr(r,g,b), red, green, blue, r, g, b);  
    }
 }
@@ -991,7 +1008,7 @@ void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed, char* stuffI
    }
    else
    {
-      printf("Group %s's LED color: %s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
+      printf("\nGroup %s's LED color: %s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
              stuffInfoStr, convertRgb2ColorStr(r,g,b),
              gpioLed.redLed, gpioLed.greLed, gpioLed.bluLed,
              r, g, b);  
@@ -1397,6 +1414,60 @@ bool buildCtrlGrpLedThreads(GroupInfoT* p_headGroup)
 }
 
 //----------------------------------------------------------------------------
+// Poll to control all led for group
+//----------------------------------------------------------------------------
+void* ctrlGrpLedPoll(void *arg)
+{
+   GroupInfoT* p_group = (GroupInfoT*)arg;
+   LedInfoT preLedSta; 
+   LedInfoT curLedSta; 
+   GpioStatusE gpioSta;
+
+   preLedSta.color = NON_COLOR;
+   preLedSta.isAnime = false;
+
+   while (1)
+   {
+      pthread_mutex_lock(&g_terminateLock);
+      bool tempTerminate = g_terminateAll;
+      pthread_mutex_unlock(&g_terminateLock);
+      if (tempTerminate)
+      {
+         break;
+      }
+
+      pthread_mutex_lock(&p_group->lockLedSta);
+      curLedSta = p_group->ledStatus;
+      pthread_mutex_unlock(&p_group->lockLedSta);
+
+      // Check if previous Led status and current Led status is the same or not 
+      if ((preLedSta.color == curLedSta.color) &&
+          (preLedSta.isAnime == curLedSta.isAnime))
+      {
+         if (g_isAllowAnime && curLedSta.isAnime)
+         {
+            gpioSta = (gpioSta == ON) ? OF : ON;
+            ledCtrl(curLedSta.color, gpioSta, p_group->gpio, p_group->groupName);
+         }
+         else
+         {
+            printf("\nGroup %s's LED color: %s , led will not blink and led color is the same as before\n",
+                   p_group->groupName, convert2ColorStr(curLedSta));
+         }
+      }
+      else
+      {
+         gpioSta = ON;
+         ledCtrl(curLedSta.color, gpioSta, p_group->gpio, p_group->groupName);
+         preLedSta = curLedSta;
+      }
+
+      sleep(g_ledAnimeTime);
+   }
+   return 0;
+}
+
+//----------------------------------------------------------------------------
 // Wait until all threads have been stopped
 //----------------------------------------------------------------------------
 void waitAllThreadsStop(GroupInfoT* p_headGroup)
@@ -1444,63 +1515,8 @@ void cleanAllGroupInfo(GroupInfoT* p_headGroup)
       free(p_tempGroup);
    }
 }
-
 //----------------------------------------------------------------------------
-// Poll to control all led for group
-//----------------------------------------------------------------------------
-void* ctrlGrpLedPoll(void *arg)
-{
-   GroupInfoT* p_group = (GroupInfoT*)arg;
-   LedInfoT preLedSta; 
-   LedInfoT curLedSta; 
-   GpioStatusE gpioSta;
-
-   preLedSta.color = NON_COLOR;
-   preLedSta.isAnime = false;
-
-   while (1)
-   {
-      pthread_mutex_lock(&g_terminateLock);
-      bool tempTerminate = g_terminateAll;
-      pthread_mutex_unlock(&g_terminateLock);
-      if (tempTerminate)
-      {
-         break;
-      }
-
-      pthread_mutex_lock(&p_group->lockLedSta);
-      curLedSta = p_group->ledStatus;
-      pthread_mutex_unlock(&p_group->lockLedSta);
-
-      // Check if previous Led status and current Led status is the same or not 
-      if ((preLedSta.color == curLedSta.color) &&
-          (preLedSta.isAnime == curLedSta.isAnime))
-      {
-         if (g_isAllowAnime && curLedSta.isAnime)
-         {
-            gpioSta = (gpioSta == ON) ? OF : ON;
-            ledCtrl(curLedSta.color, gpioSta, p_group->gpio, p_group->groupName);
-         }
-         else
-         {
-            printf("Group %s's LED color: %s , led will not blink and led color is the same as before\n",
-                   p_group->groupName, convert2ColorStr(curLedSta));
-         }
-      }
-      else
-      {
-         gpioSta = ON;
-         ledCtrl(curLedSta.color, gpioSta, p_group->gpio, p_group->groupName);
-         preLedSta = curLedSta;
-      }
-
-      sleep(g_ledAnimeTime);
-   }
-   return 0;
-}
-
-//----------------------------------------------------------------------------
-// This function is use for parsing all argument in command line
+// Main function
 //----------------------------------------------------------------------------
 int main(int argc, char *argv[])
 {
@@ -1508,7 +1524,7 @@ int main(int argc, char *argv[])
    if (!parseArgument(argc, argv))
    {
       printf("Can not parse command line!\n");
-      exit(0);
+      exit(1);
    }
 
    // Daemonize
@@ -1562,14 +1578,14 @@ int main(int argc, char *argv[])
    if (!parseXMLFile(g_xmlFile, &p_allGroups))
    {
       printf("Can not parse XML file\n");
-      exit(0);
+      exit(1);
    }
 
    // Build files to store data get from curl commands for each jobs
    if (!buildJobFiles(p_allGroups))
    {
       printf("Can not buildJobFiles\n");
-      exit(0);
+      exit(1);
    }
 
    printAllGroupInfo(p_allGroups);
