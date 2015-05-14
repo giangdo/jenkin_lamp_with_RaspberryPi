@@ -90,9 +90,9 @@ static pthread_mutex_t g_terminateLock;
  
 static void sig_term(int isig)
 {
-  // pthread_mutex_lock(&g_terminateLock);
+   pthread_mutex_lock(&g_terminateLock);
    g_terminateAll = true;
-   //pthread_mutex_unlock(&g_terminateLock);
+   pthread_mutex_unlock(&g_terminateLock);
 }
 
 static void sig_chld(int sig)
@@ -106,9 +106,9 @@ static void sig_chld(int sig)
 
 static void exitNow()
 {
-   //pthread_mutex_lock(&g_terminateLock);
+   pthread_mutex_lock(&g_terminateLock);
    g_terminateAll = true;
-   //pthread_mutex_unlock(&g_terminateLock);
+   pthread_mutex_unlock(&g_terminateLock);
 
 }
 
@@ -416,6 +416,7 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
       // TODO: should use Ping or sth like that to get network speed between
       //       current computer and jenkins server, then change this value frequently
       //       I think interval between ajudgement should be 4-5 hour
+      //       We can you sigalrm to create timer
       p_group->curlTime.maxTime = 60;
       p_group->curlTime.pollTime = 3;
 
@@ -999,9 +1000,9 @@ void* evalGrpColorPoll(void* arg)
 
    while (1)
    {
-      //pthread_mutex_lock(&g_terminateLock);
+      pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
-      //pthread_mutex_unlock(&g_terminateLock);
+      pthread_mutex_unlock(&g_terminateLock);
       if (tempTerminate)
       {
          break;
@@ -1128,9 +1129,9 @@ bool executeCurlCmd(char* curlCommand)
 
    while (fgets(curlDoneStr, sizeof(curlDoneStr), file) != NULL)
    { 
-      //pthread_mutex_lock(&g_terminateLock);
+      pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
-      //pthread_mutex_unlock(&g_terminateLock);
+      pthread_mutex_unlock(&g_terminateLock);
       if (tempTerminate)
       {
          break;
@@ -1376,9 +1377,9 @@ void* ctrlGrpLedPoll(void *arg)
 
    while (1)
    {
-      //pthread_mutex_lock(&g_terminateLock);
+      pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
-      //pthread_mutex_unlock(&g_terminateLock);
+      pthread_mutex_unlock(&g_terminateLock);
       if (tempTerminate)
       {
          break;
@@ -1513,13 +1514,28 @@ int main(int argc, char *argv[])
    //Main thread will wait until g_terminateAll is true
    while (1)
    {
-     // pthread_mutex_lock(&g_terminateLock);
+#if 1 
+      if (g_terminateAll)
+      {
+         break;
+      }
+#else
+      // DEAD lock if we write code in this way
+      // + Assume SIGINT occur when g_terminateLock is locked (this situation will occur very frequently
+      // because main thread executed these line of code almost time)
+      // + Main thread jump to sigterm() function.
+      // + in sigterm() function, we will wait for g_terminateLock is unlock.
+      // + But g_terminateLock can be unlock anymore, because it is locked in main thread itself!
+      // => deadlock
+
+      pthread_mutex_lock(&g_terminateLock);
       bool tempTerminate = g_terminateAll;
-     // pthread_mutex_unlock(&g_terminateLock);
+      pthread_mutex_unlock(&g_terminateLock);
       if (tempTerminate)
       {
          break;
       }
+#endif
    }
 
    //Waiting for all evaluated Color Threads and Led Control Threads stop
