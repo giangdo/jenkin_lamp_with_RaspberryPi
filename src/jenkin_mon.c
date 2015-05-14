@@ -79,7 +79,7 @@ bool g_isVerbose = false;
 
 // Option to control led
 const u_int8 g_ledAnimeTime = 1; // in second
-bool g_isCtrlRealLed = false;
+bool g_isCtrlRealLed = false;    // Defaut -> do not control real GPIO led
 
 // Option to deamonize
 bool g_isDaemon = false;
