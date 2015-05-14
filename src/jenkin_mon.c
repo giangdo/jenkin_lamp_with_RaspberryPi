@@ -10,7 +10,8 @@
 #include <time.h>
 #include <stdbool.h>
 #include "jenkin_mon.h"
-#include <dirent.h>
+#include <dirent.h> // For opendir() and closedir()
+#include <sys/stat.h> // For stat() and mkdir()
 
 //--------------------------------------------------------------------------------------------------
 // README before read source code
@@ -71,8 +72,7 @@
 //----------------------------------------------------------------
 // Global variable
 //----------------------------------------------------------------
-char* g_pathInfoFiles = "/opt/infoFiles";
-char* g_xmlFile = "/opt/jobsJenkinConfig.xml";
+char* g_xmlFile = "jobsJenkinConfig.xml";
 
 // Option to control verbose log
 bool g_isVerbose = false;
@@ -372,17 +372,10 @@ bool parseGroupAttr(xmlDoc *doc, xmlNode *groupNode, GroupInfoT* p_group)
 //----------------------------------------------------------------------------
 void initAllGroupLed(GroupInfoT* p_headGroup)
 {
-   // TODO: need to init gpio in this function instead of using bashscript
    GroupInfoT* p_group = NULL;
    for (p_group = p_headGroup; p_group; p_group = p_group->p_nextGroup)
    {
-      p_group->ledStatus.color = WHI_COLOR;
-      p_group->ledStatus.isAnime = false;
-      ledControl(p_group->ledStatus,
-                 p_group->gpio.redLed, p_group->gpio.greLed, p_group->gpio.bluLed);
-      p_group->ledStatus.color = NON_COLOR;
-      ledControl(p_group->ledStatus,
-                 p_group->gpio.redLed, p_group->gpio.greLed, p_group->gpio.bluLed);
+      // TODO: need to init gpio in this function instead of using bashscript
    }
 }
 
@@ -453,6 +446,9 @@ void initStuffOfAllGroup(GroupInfoT* p_headGroup)
 
       p_group->stdLed.fail.color = RED_COLOR;
       p_group->stdLed.fail.isAnime = true;
+
+      p_group->ledStatus.color = WHI_COLOR;
+      p_group->ledStatus.isAnime = false;
 
       // Init CurlTime value
       // TODO: should use Ping or sth like that to get network speed between
@@ -583,21 +579,15 @@ bool parseArgument(int argc, char* argv[])
       {
          g_isDaemon = true;
       }
-      else if (!strcmp(argv[indexArg], "--currentPath") ||
-               !strcmp(argv[indexArg], "-c"))
-      {
-         g_pathInfoFiles = "./infoFiles";
-      }
       else if (!strcmp(argv[indexArg], "--help") ||
                !strcmp(argv[indexArg], "-h") ||
                !strcmp(argv[indexArg], "help"))
       {
          printf("usage:\n"
                 "default xml config file is /opt/jobsJenkinConfig.xml, if we want to change use -f\n"
-                "default infoFiles directory is /opt/infoFiles, if we want to change to current path -> use -c\n"
                 "./jenkin_mon\n"
-                "./jenkin_mon -f configFILE.xml --currentPath --verbose --realled --daemon\n"
-                "./jenkin_mon -f configFILE.xml -c            -v        -r        -d\n");
+                "./jenkin_mon -f configFILE.xml --verbose --realled --daemon\n"
+                "./jenkin_mon -f configFILE.xml -v        -r        -d\n");
          exit(0);
       }
    }
@@ -605,10 +595,16 @@ bool parseArgument(int argc, char* argv[])
    return true;
 }
 
+//----------------------------------------------------------------------------
+// Build full path to files which contains the information of Job
+//----------------------------------------------------------------------------
 bool buildJobFiles(GroupInfoT* p_headGroup)
 {
-   // Check g_pathInfoFiles exist or not
-   DIR* infoFileDir = opendir(g_pathInfoFiles);
+   char* infoFilesDir = "infoFiles";
+#if 0
+   // Way 1: to check directory is OK or not
+   // Check infoFilesDir exist or not
+   DIR* infoFileDir = opendir(infoFilesDir);
    if (infoFileDir)
    {
       if (closedir(infoFileDir))
@@ -622,6 +618,17 @@ bool buildJobFiles(GroupInfoT* p_headGroup)
       printf("There is a problem with infoFiles directory: %s\n", strerror(errno));
       exit(1);
    }
+#else
+   // Way 2: to check directory is OK or not
+   struct stat st = {0};
+   if (stat(infoFilesDir, &st) == -1)
+   {
+      if(mkdir(infoFilesDir, (S_IXUSR| S_IRUSR | S_IWUSR) | S_IROTH))
+      {
+         printf("Can not create directory: %s, error: %s\n", infoFilesDir, strerror(errno));
+      }
+   }
+#endif
 
    GroupInfoT* p_group = p_headGroup;
    if (p_group)
@@ -636,9 +643,9 @@ bool buildJobFiles(GroupInfoT* p_headGroup)
             for (; p_job; p_job = p_job->p_nextJob)
             {
                sprintf(p_job->statusInfoFile, "%s/s%u_%u",
-                       g_pathInfoFiles, groupIndex, jobIndex);
+                       infoFilesDir, groupIndex, jobIndex);
                sprintf(p_job->lastBuildInfoFile, "%s/l%u_%u",
-                       g_pathInfoFiles, groupIndex, jobIndex);
+                       infoFilesDir, groupIndex, jobIndex);
                jobIndex++;
             }
             groupIndex++;
@@ -829,8 +836,8 @@ void convert2ColorStr(LedInfoT led, char* colorStr, u_int32 strLength)
       }
    }
 }
-
 #endif
+
 //----------------------------------------------------------------------------
 // Convert RGB gpio status to color string
 //----------------------------------------------------------------------------
@@ -934,81 +941,6 @@ void setGPIOValueNoCheck(u_int8 pin, GpioStatusE state)
          return;
       }
       fclose(file);
-   }
-}
-
-//----------------------------------------------------------------------------
-// Control led by reading and setting value to GPIO
-//----------------------------------------------------------------------------
-void ledControl(LedInfoT led, u_int8 red, u_int8 green, u_int8 blue)
-{
-   Color2LedInfoT* pColor2Led = C2LInfo;
-   while ((pColor2Led->color != NON_COLOR) &&
-         (led.color != pColor2Led->color))
-   {
-      pColor2Led++;
-   }
-
-   GpioStatusE r = OF;
-   GpioStatusE g = OF;
-   GpioStatusE b = OF;
-
-   // Decide next state for Led
-   if (led.isAnime)
-   {
-      // Specify current state for all Leds
-      GpioStatusE currentState;
-      if (pColor2Led->r == ON)
-      {
-         currentState = readGPIOValue(red);
-      }
-      else if (pColor2Led->g == ON)
-      {
-         currentState = readGPIOValue(green);
-      }
-      else if (pColor2Led->b == ON)
-      {
-         currentState = readGPIOValue(blue);
-      }
-      else
-      {
-         currentState = readGPIOValue(red);
-      }
-
-      // Decide next state for all Leds
-      if (pColor2Led->r == ON)
-      {
-         r = !currentState;
-      }
-
-      if (pColor2Led->g == ON)
-      {
-         g = !currentState;
-      }
-
-      if (pColor2Led->b == ON)
-      {
-         b = !currentState;
-      }
-   }
-   else
-   {
-      r = pColor2Led->r;
-      g = pColor2Led->g;
-      b = pColor2Led->b;
-   }
-
-   // Set value for GPIO -> control Led
-   if (g_isCtrlRealLed)
-   {
-      setGPIOValueNoCheck(red  , r);
-      setGPIOValueNoCheck(green, g);
-      setGPIOValueNoCheck(blue , b);
-   }
-   else
-   {
-      printf("\n%s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
-             convertRgb2ColorStr(r,g,b), red, green, blue, r, g, b);
    }
 }
 
@@ -1250,7 +1182,11 @@ void evaluateColor(GroupInfoT* p_group)
    {
       char str[100];
       char colorStr[20];
+
+      pthread_mutex_lock(&p_group->lockLedSta);
       convert2ColorStr(p_group->ledStatus, colorStr, 20);
+      pthread_mutex_unlock(&p_group->lockLedSta);
+
       snprintf(str, 100, "%s - %s - %s- %s",
                (p_group->curSta.isAllDisable) ?  "Disable"   : " ",
                (p_group->curSta.isThreshold)  ?  "Threshold" : " ",
