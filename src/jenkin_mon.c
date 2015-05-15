@@ -556,6 +556,7 @@ bool parseXMLFile(const char* fileName, GroupInfoT** pp_headGroup)
 //----------------------------------------------------------------------------
 bool parseArgument(int argc, char* argv[])
 {
+   // TODO should use getopt_long
    int indexArg;
    for (indexArg = 1; indexArg < argc; indexArg++)
    {
@@ -588,6 +589,11 @@ bool parseArgument(int argc, char* argv[])
                 "./jenkin_mon -f configFILE.xml --verbose --realled --daemon\n"
                 "./jenkin_mon -f configFILE.xml -v        -r        -d\n");
          exit(0);
+      }
+      else
+      {
+         printf("Wrong argument, to know how to use: please type ./jenkinmon --help\n");
+         exit(1);
       }
    }
 
