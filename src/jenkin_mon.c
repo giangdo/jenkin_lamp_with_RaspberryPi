@@ -35,7 +35,7 @@
 //      - Race condition between Color Thread and Led Thread:
 //         -> at the time Color Thread write into Evaluatied Color, Led Thread read this infomation
 //
-//* Version v1.2:
+//* Version v2.0:
 //   + Design:
 //      - We have 2 threads to manage a group:
 //         . Color Thread:
@@ -43,10 +43,7 @@
 //            , evaluate color and modify the evaluated color
 //         . Led Thread:
 //            , get evaluated color and control led
-//
-//* Version v2.0:
-//    + Design:
-//         - devide threads base on groups
+//       -> Number of threads = (2 * number of groups) + 1;
 //
 //* Version v3.0:
 //    + Feature: support command line to control/config program
