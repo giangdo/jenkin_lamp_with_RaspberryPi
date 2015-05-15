@@ -10,8 +10,9 @@
 #include <time.h>
 #include <stdbool.h>
 #include "jenkin_mon.h"
-#include <dirent.h> // For opendir() and closedir()
+#include <dirent.h>   // For opendir() and closedir()
 #include <sys/stat.h> // For stat() and mkdir()
+#include <getopt.h>   // For getopt_long
 
 //--------------------------------------------------------------------------------------------------
 // README before read source code
@@ -556,48 +557,81 @@ bool parseXMLFile(const char* fileName, GroupInfoT** pp_headGroup)
 //----------------------------------------------------------------------------
 bool parseArgument(int argc, char* argv[])
 {
-   // TODO should use getopt_long
-   int indexArg;
-   for (indexArg = 1; indexArg < argc; indexArg++)
+   bool parseOK = true;
+   bool needHelp = false;
+   bool hasWrongNonOpt = false;
+   int returnCharacter;
+   int optionIdx;
+   struct option longOptions[] =
    {
-      if (!strcmp(argv[indexArg], "-f") && (argc > indexArg + 1))
+      {"file"    ,required_argument ,0 ,'f'},
+      {"verbose" ,no_argument       ,0 ,'v'},
+      {"daemon"  ,no_argument       ,0 ,'d'},
+      {"help"    ,no_argument       ,0 ,'h'},
+      {"realled" ,no_argument       ,0 ,'r'},
+      {0         ,0                 ,0 ,0  }
+   };
+
+   while (parseOK)
+   {
+      // getopt_long() function will check option in "argv" match with member in both list
+      // "f:vdh" list and longOptions[] array list
+      returnCharacter = getopt_long(argc, argv, "f:vdh", longOptions, &optionIdx);
+      if (returnCharacter == -1)
       {
-        g_xmlFile = argv[++indexArg];
+         break;
       }
-      else if (!strcmp(argv[indexArg], "--verbose") ||
-               !strcmp(argv[indexArg], "-v"))
+
+      switch (returnCharacter)
       {
-         g_isVerbose = true;
-      }
-      else if (!strcmp(argv[indexArg], "--realled") ||
-               !strcmp(argv[indexArg], "-r"))
-      {
-         g_isCtrlRealLed = true;
-      }
-      else if (!strcmp(argv[indexArg], "--daemon") ||
-               !strcmp(argv[indexArg], "-d"))
-      {
-         g_isDaemon = true;
-      }
-      else if (!strcmp(argv[indexArg], "--help") ||
-               !strcmp(argv[indexArg], "-h") ||
-               !strcmp(argv[indexArg], "help"))
-      {
-         printf("usage:\n"
-                "default xml config file is /opt/jobsJenkinConfig.xml, if we want to change use -f\n"
-                "./jenkin_mon\n"
-                "./jenkin_mon -f configFILE.xml --verbose --realled --daemon\n"
-                "./jenkin_mon -f configFILE.xml -v        -r        -d\n");
-         exit(0);
-      }
-      else
-      {
-         printf("Wrong argument, to know how to use: please type ./jenkinmon --help\n");
-         exit(1);
+         case 'f':
+         {
+            g_xmlFile  = optarg;
+         }
+         break;
+         case 'v':
+         {
+            g_isVerbose = true;
+         }
+         break;
+         case 'd':
+         {
+            g_isDaemon = true;
+         }
+         break;
+         case 'h':
+         {
+            needHelp = true;
+         }
+         break;
+         case 'r':
+         {
+            g_isCtrlRealLed = true;
+         }
+         break;
+         case '?':
+         {
+            parseOK = false;
+         }
+         break;
+         default:
+         {
+            printf("?? getop_returnd character code 0%o ??\n", returnCharacter);
+         }
+         break;
       }
    }
 
-   return true;
+   if (optind < argc)
+   {
+      hasWrongNonOpt = true;
+      while (optind < argc)
+      {
+         printf("This non-option argument is wrong: %s\n", argv[optind++]);
+      }
+   }
+
+   return (parseOK && !hasWrongNonOpt && !needHelp);
 }
 
 //----------------------------------------------------------------------------
@@ -1454,7 +1488,11 @@ int main(int argc, char *argv[])
    // Parse Argument from command line
    if (!parseArgument(argc, argv))
    {
-      printf("Can not parse command line!\n");
+      printf("usage:\n"
+             "default xml config file is /opt/jobsJenkinConfig.xml, if we want to change use -f\n"
+             "./jenkin_mon\n"
+             "./jenkin_mon -f configFILE.xml --verbose --realled --daemon\n"
+             "./jenkin_mon -f configFILE.xml -v        -r        -d\n");
       exit(1);
    }
 
