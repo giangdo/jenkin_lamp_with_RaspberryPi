@@ -118,7 +118,6 @@ static void exitNow()
    pthread_mutex_lock(&g_terminateLock);
    g_terminateAll = true;
    pthread_mutex_unlock(&g_terminateLock);
-
 }
 
 //----------------------------------------------------------------------------
@@ -695,10 +694,6 @@ void colorFromFile(char* fileName, char* colorStr, size_t strSize)
 int64 timeStampFromFile(char* fileName)
 {
    int64 timeStamp = 0;
-   if (g_isVerbose)
-   {
-      printf("get timestamp from file: %s\n", fileName);
-   }
    char grepCommand[100];
    char timeStampLine[50];
 #if 0
@@ -729,6 +724,11 @@ int64 timeStampFromFile(char* fileName)
    }
    fclose(file);
    timeStamp = atoll(timeStampStr) / 1000;
+   if (g_isVerbose)
+   {
+      printf("Get timeStamp in ms from file %s: %s (in s :%llu)\n",
+              fileName, timeStampStr, timeStamp);
+   }
 
    return timeStamp;
 }
@@ -1015,6 +1015,13 @@ void* evalGrpColorPoll(void* arg)
       printf("Can not build curl Command\n");
       exitNow();
    }
+   else
+   {
+      if (g_isVerbose)
+      {
+         printf("Group %s's Curl command:\n%s\n", p_group->groupName, pCurlCmd);
+      }
+   }
 
    while (1)
    {
@@ -1136,6 +1143,10 @@ bool executeCurlCmd(char* curlCommand)
 {
    // TODO: should use CURL api function instead of execute curl command in shell
    char curlDoneStr[100];
+   curlDoneStr[0] = 0; //To void valgrind error
+                       //"Conditional jump or move depends on uninitialised value(s)"
+                       //If curlDoneStr is not initialized and not modified before printf
+                       //, we will prints many things we do not expect!
    FILE* file;
    // XXX : by using system() function, we can not receive SIGTERM or
    //       SIGINT signal by press "Ctrl + C"
@@ -1210,6 +1221,7 @@ void evalGroupStatus(GroupInfoT* p_group)
    p_group->curSta.isThreshold = false;
    p_group->curSta.isAllDisable = true;
    JobInfoT* p_job = NULL;
+   bool isJobThreshold;
 
    for (p_job = p_group->p_allJobs; p_job; p_job = p_job->p_nextJob)
    {
@@ -1222,12 +1234,13 @@ void evalGroupStatus(GroupInfoT* p_group)
          p_group->curSta.isSuccess = p_group->curSta.isSuccess &&
                                      (jobLedInfo.color == BLU_COLOR);
 
-         p_group->curSta.isBuilding = p_group->curSta.isBuilding || jobLedInfo.isAnime;
+         p_group->curSta.isBuilding = p_group->curSta.isBuilding ||
+                                      jobLedInfo.isAnime;
 
          int64 jobTime = timeStampFromFile(p_job->lastBuildInfoFile);
          int64 curTime = currentTimeStamp();
-         p_group->curSta.isThreshold = p_group->curSta.isThreshold ||
-                           ((curTime - jobTime) > (int64)p_group->lastBuildThreshold);
+         isJobThreshold = (curTime - jobTime) > (int64)p_group->lastBuildThreshold;
+         p_group->curSta.isThreshold = p_group->curSta.isThreshold || isJobThreshold;
       }
    }
 }
