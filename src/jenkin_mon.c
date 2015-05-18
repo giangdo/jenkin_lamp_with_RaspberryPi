@@ -1411,10 +1411,13 @@ void* ctrlGrpLedPoll(void *arg)
          }
          else
          {
-            char colorStr[20];
-            convert2ColorStr(curLedSta, colorStr, 20);
-            printf("\nGroup %s's LED color: %s , led will not blink and led color is the same as before\n",
-                   p_group->groupName, colorStr);
+            if (!g_isCtrlRealLed)
+            {
+               char colorStr[20];
+               convert2ColorStr(curLedSta, colorStr, 20);
+               printf("\nGroup %s's LED color: %s , led will not blink and led color is the same as before\n",
+                      p_group->groupName, colorStr);
+            }
          }
       }
       else
