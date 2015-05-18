@@ -1011,7 +1011,8 @@ void ledCtrl(ColorE color, GpioStatusE gpioState, LedGpioT gpioLed, char* stuffI
       setGPIOValueNoCheck(gpioLed.greLed, g);
       setGPIOValueNoCheck(gpioLed.bluLed, b);
    }
-   else
+
+   if (g_isVerbose)
    {
       printf("\nGroup %s's LED color: %s <=> red-green-blue: %d-%d-%d r-g-b:%d-%d-%d\n",
              stuffInfoStr, convertRgb2ColorStr(r,g,b),
@@ -1411,7 +1412,7 @@ void* ctrlGrpLedPoll(void *arg)
          }
          else
          {
-            if (!g_isCtrlRealLed)
+            if (g_isVerbose)
             {
                char colorStr[20];
                convert2ColorStr(curLedSta, colorStr, 20);
